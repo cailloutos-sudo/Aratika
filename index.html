@@ -1,0 +1,1807 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#063A52">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Aratika">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Aratika · Compagnon de pêche</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<script>
+/* SunCalc 1.9.0 (c) Vladimir Agafonkin — BSD-2 — intégré pour le hors-ligne */
+/*
+ (c) 2011-2015, Vladimir Agafonkin
+ SunCalc is a JavaScript library for calculating sun/moon position and light phases.
+ https://github.com/mourner/suncalc
+*/
+
+(function () { 'use strict';
+
+// shortcuts for easier to read formulas
+
+var PI   = Math.PI,
+    sin  = Math.sin,
+    cos  = Math.cos,
+    tan  = Math.tan,
+    asin = Math.asin,
+    atan = Math.atan2,
+    acos = Math.acos,
+    rad  = PI / 180;
+
+// sun calculations are based on http://aa.quae.nl/en/reken/zonpositie.html formulas
+
+
+// date/time constants and conversions
+
+var dayMs = 1000 * 60 * 60 * 24,
+    J1970 = 2440588,
+    J2000 = 2451545;
+
+function toJulian(date) { return date.valueOf() / dayMs - 0.5 + J1970; }
+function fromJulian(j)  { return new Date((j + 0.5 - J1970) * dayMs); }
+function toDays(date)   { return toJulian(date) - J2000; }
+
+
+// general calculations for position
+
+var e = rad * 23.4397; // obliquity of the Earth
+
+function rightAscension(l, b) { return atan(sin(l) * cos(e) - tan(b) * sin(e), cos(l)); }
+function declination(l, b)    { return asin(sin(b) * cos(e) + cos(b) * sin(e) * sin(l)); }
+
+function azimuth(H, phi, dec)  { return atan(sin(H), cos(H) * sin(phi) - tan(dec) * cos(phi)); }
+function altitude(H, phi, dec) { return asin(sin(phi) * sin(dec) + cos(phi) * cos(dec) * cos(H)); }
+
+function siderealTime(d, lw) { return rad * (280.16 + 360.9856235 * d) - lw; }
+
+function astroRefraction(h) {
+    if (h < 0) // the following formula works for positive altitudes only.
+        h = 0; // if h = -0.08901179 a div/0 would occur.
+
+    // formula 16.4 of "Astronomical Algorithms" 2nd edition by Jean Meeus (Willmann-Bell, Richmond) 1998.
+    // 1.02 / tan(h + 10.26 / (h + 5.10)) h in degrees, result in arc minutes -> converted to rad:
+    return 0.0002967 / Math.tan(h + 0.00312536 / (h + 0.08901179));
+}
+
+// general sun calculations
+
+function solarMeanAnomaly(d) { return rad * (357.5291 + 0.98560028 * d); }
+
+function eclipticLongitude(M) {
+
+    var C = rad * (1.9148 * sin(M) + 0.02 * sin(2 * M) + 0.0003 * sin(3 * M)), // equation of center
+        P = rad * 102.9372; // perihelion of the Earth
+
+    return M + C + P + PI;
+}
+
+function sunCoords(d) {
+
+    var M = solarMeanAnomaly(d),
+        L = eclipticLongitude(M);
+
+    return {
+        dec: declination(L, 0),
+        ra: rightAscension(L, 0)
+    };
+}
+
+
+var SunCalc = {};
+
+
+// calculates sun position for a given date and latitude/longitude
+
+SunCalc.getPosition = function (date, lat, lng) {
+
+    var lw  = rad * -lng,
+        phi = rad * lat,
+        d   = toDays(date),
+
+        c  = sunCoords(d),
+        H  = siderealTime(d, lw) - c.ra;
+
+    return {
+        azimuth: azimuth(H, phi, c.dec),
+        altitude: altitude(H, phi, c.dec)
+    };
+};
+
+
+// sun times configuration (angle, morning name, evening name)
+
+var times = SunCalc.times = [
+    [-0.833, 'sunrise',       'sunset'      ],
+    [  -0.3, 'sunriseEnd',    'sunsetStart' ],
+    [    -6, 'dawn',          'dusk'        ],
+    [   -12, 'nauticalDawn',  'nauticalDusk'],
+    [   -18, 'nightEnd',      'night'       ],
+    [     6, 'goldenHourEnd', 'goldenHour'  ]
+];
+
+// adds a custom time to the times config
+
+SunCalc.addTime = function (angle, riseName, setName) {
+    times.push([angle, riseName, setName]);
+};
+
+
+// calculations for sun times
+
+var J0 = 0.0009;
+
+function julianCycle(d, lw) { return Math.round(d - J0 - lw / (2 * PI)); }
+
+function approxTransit(Ht, lw, n) { return J0 + (Ht + lw) / (2 * PI) + n; }
+function solarTransitJ(ds, M, L)  { return J2000 + ds + 0.0053 * sin(M) - 0.0069 * sin(2 * L); }
+
+function hourAngle(h, phi, d) { return acos((sin(h) - sin(phi) * sin(d)) / (cos(phi) * cos(d))); }
+function observerAngle(height) { return -2.076 * Math.sqrt(height) / 60; }
+
+// returns set time for the given sun altitude
+function getSetJ(h, lw, phi, dec, n, M, L) {
+
+    var w = hourAngle(h, phi, dec),
+        a = approxTransit(w, lw, n);
+    return solarTransitJ(a, M, L);
+}
+
+
+// calculates sun times for a given date, latitude/longitude, and, optionally,
+// the observer height (in meters) relative to the horizon
+
+SunCalc.getTimes = function (date, lat, lng, height) {
+
+    height = height || 0;
+
+    var lw = rad * -lng,
+        phi = rad * lat,
+
+        dh = observerAngle(height),
+
+        d = toDays(date),
+        n = julianCycle(d, lw),
+        ds = approxTransit(0, lw, n),
+
+        M = solarMeanAnomaly(ds),
+        L = eclipticLongitude(M),
+        dec = declination(L, 0),
+
+        Jnoon = solarTransitJ(ds, M, L),
+
+        i, len, time, h0, Jset, Jrise;
+
+
+    var result = {
+        solarNoon: fromJulian(Jnoon),
+        nadir: fromJulian(Jnoon - 0.5)
+    };
+
+    for (i = 0, len = times.length; i < len; i += 1) {
+        time = times[i];
+        h0 = (time[0] + dh) * rad;
+
+        Jset = getSetJ(h0, lw, phi, dec, n, M, L);
+        Jrise = Jnoon - (Jset - Jnoon);
+
+        result[time[1]] = fromJulian(Jrise);
+        result[time[2]] = fromJulian(Jset);
+    }
+
+    return result;
+};
+
+
+// moon calculations, based on http://aa.quae.nl/en/reken/hemelpositie.html formulas
+
+function moonCoords(d) { // geocentric ecliptic coordinates of the moon
+
+    var L = rad * (218.316 + 13.176396 * d), // ecliptic longitude
+        M = rad * (134.963 + 13.064993 * d), // mean anomaly
+        F = rad * (93.272 + 13.229350 * d),  // mean distance
+
+        l  = L + rad * 6.289 * sin(M), // longitude
+        b  = rad * 5.128 * sin(F),     // latitude
+        dt = 385001 - 20905 * cos(M);  // distance to the moon in km
+
+    return {
+        ra: rightAscension(l, b),
+        dec: declination(l, b),
+        dist: dt
+    };
+}
+
+SunCalc.getMoonPosition = function (date, lat, lng) {
+
+    var lw  = rad * -lng,
+        phi = rad * lat,
+        d   = toDays(date),
+
+        c = moonCoords(d),
+        H = siderealTime(d, lw) - c.ra,
+        h = altitude(H, phi, c.dec),
+        // formula 14.1 of "Astronomical Algorithms" 2nd edition by Jean Meeus (Willmann-Bell, Richmond) 1998.
+        pa = atan(sin(H), tan(phi) * cos(c.dec) - sin(c.dec) * cos(H));
+
+    h = h + astroRefraction(h); // altitude correction for refraction
+
+    return {
+        azimuth: azimuth(H, phi, c.dec),
+        altitude: h,
+        distance: c.dist,
+        parallacticAngle: pa
+    };
+};
+
+
+// calculations for illumination parameters of the moon,
+// based on http://idlastro.gsfc.nasa.gov/ftp/pro/astro/mphase.pro formulas and
+// Chapter 48 of "Astronomical Algorithms" 2nd edition by Jean Meeus (Willmann-Bell, Richmond) 1998.
+
+SunCalc.getMoonIllumination = function (date) {
+
+    var d = toDays(date || new Date()),
+        s = sunCoords(d),
+        m = moonCoords(d),
+
+        sdist = 149598000, // distance from Earth to Sun in km
+
+        phi = acos(sin(s.dec) * sin(m.dec) + cos(s.dec) * cos(m.dec) * cos(s.ra - m.ra)),
+        inc = atan(sdist * sin(phi), m.dist - sdist * cos(phi)),
+        angle = atan(cos(s.dec) * sin(s.ra - m.ra), sin(s.dec) * cos(m.dec) -
+                cos(s.dec) * sin(m.dec) * cos(s.ra - m.ra));
+
+    return {
+        fraction: (1 + cos(inc)) / 2,
+        phase: 0.5 + 0.5 * inc * (angle < 0 ? -1 : 1) / Math.PI,
+        angle: angle
+    };
+};
+
+
+function hoursLater(date, h) {
+    return new Date(date.valueOf() + h * dayMs / 24);
+}
+
+// calculations for moon rise/set times are based on http://www.stargazing.net/kepler/moonrise.html article
+
+SunCalc.getMoonTimes = function (date, lat, lng, inUTC) {
+    var t = new Date(date);
+    if (inUTC) t.setUTCHours(0, 0, 0, 0);
+    else t.setHours(0, 0, 0, 0);
+
+    var hc = 0.133 * rad,
+        h0 = SunCalc.getMoonPosition(t, lat, lng).altitude - hc,
+        h1, h2, rise, set, a, b, xe, ye, d, roots, x1, x2, dx;
+
+    // go in 2-hour chunks, each time seeing if a 3-point quadratic curve crosses zero (which means rise or set)
+    for (var i = 1; i <= 24; i += 2) {
+        h1 = SunCalc.getMoonPosition(hoursLater(t, i), lat, lng).altitude - hc;
+        h2 = SunCalc.getMoonPosition(hoursLater(t, i + 1), lat, lng).altitude - hc;
+
+        a = (h0 + h2) / 2 - h1;
+        b = (h2 - h0) / 2;
+        xe = -b / (2 * a);
+        ye = (a * xe + b) * xe + h1;
+        d = b * b - 4 * a * h1;
+        roots = 0;
+
+        if (d >= 0) {
+            dx = Math.sqrt(d) / (Math.abs(a) * 2);
+            x1 = xe - dx;
+            x2 = xe + dx;
+            if (Math.abs(x1) <= 1) roots++;
+            if (Math.abs(x2) <= 1) roots++;
+            if (x1 < -1) x1 = x2;
+        }
+
+        if (roots === 1) {
+            if (h0 < 0) rise = i + x1;
+            else set = i + x1;
+
+        } else if (roots === 2) {
+            rise = i + (ye < 0 ? x2 : x1);
+            set = i + (ye < 0 ? x1 : x2);
+        }
+
+        if (rise && set) break;
+
+        h0 = h2;
+    }
+
+    var result = {};
+
+    if (rise) result.rise = hoursLater(t, rise);
+    if (set) result.set = hoursLater(t, set);
+
+    if (!rise && !set) result[ye > 0 ? 'alwaysUp' : 'alwaysDown'] = true;
+
+    return result;
+};
+
+
+// export as Node module / AMD module / browser variable
+if (typeof exports === 'object' && typeof module !== 'undefined') module.exports = SunCalc;
+else if (typeof define === 'function' && define.amd) define(SunCalc);
+else window.SunCalc = SunCalc;
+
+}());
+
+</script>
+<style>
+  :root{
+    --lagon:#19B5C9; --lagon-clair:#67D8E1; --ocean:#063A52; --ocean-fonce:#04293B;
+    --sable:#FBF6EA; --sable-bord:#ECE1CB; --corail:#FF6B4A; --corail-fonce:#D9461F;
+    --soleil:#F6B53C; --encre:#0A2A39; --encre-doux:#42606D; --nuit:#03212F;
+    --recif:#1FA968; --alerte:#D63A36; --or-doux:#FBE7B0;
+    --r:20px; --sh:0 10px 30px rgba(3,33,47,.22); --sh-s:0 4px 14px rgba(3,33,47,.16);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    font-family:"Inter",system-ui,-apple-system,sans-serif;
+    color:var(--encre); line-height:1.45;
+    background:linear-gradient(178deg,var(--lagon) 0%,#0E86A0 38%,var(--ocean) 78%,var(--ocean-fonce) 100%);
+    background-attachment:fixed; min-height:100vh;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .app{max-width:520px;margin:0 auto;padding:14px 14px 40px}
+  h1,h2,h3{font-family:"Fraunces",Georgia,serif;font-weight:900;margin:0;letter-spacing:-.01em;line-height:1.05}
+  .mono{font-family:"Space Mono",ui-monospace,monospace}
+  a{color:inherit}
+  button{font-family:inherit}
+
+  /* ---- topbar ---- */
+  .top{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;padding:8px 4px 16px;color:#fff}
+  .place{font-size:34px;line-height:.95;text-shadow:0 2px 14px rgba(3,33,47,.35)}
+  .place small{display:block;font-family:"Space Mono",monospace;font-size:11px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;opacity:.85;margin-top:6px}
+  .topdate{font-family:"Space Mono",monospace;font-size:11px;text-align:right;opacity:.92;text-transform:capitalize}
+  .gear{appearance:none;border:none;background:rgba(255,255,255,.18);color:#fff;width:34px;height:34px;border-radius:50%;font-size:16px;cursor:pointer;backdrop-filter:blur(6px);flex:none}
+
+  /* ---- generic card ---- */
+  .card{background:var(--sable);border-radius:var(--r);box-shadow:var(--sh);border:1px solid var(--sable-bord);overflow:hidden}
+  .pad{padding:16px}
+  .eyebrow{font-family:"Space Mono",monospace;font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--encre-doux)}
+  .muted{color:var(--encre-doux)}
+
+  /* ---- verdict / hero ---- */
+  .verdict{margin-bottom:14px}
+  .verdict .pad{display:flex;gap:14px;align-items:center}
+  .gauge{flex:none;width:78px;height:78px;position:relative}
+  .gauge .val{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .gauge .num{font-family:"Fraunces",serif;font-weight:900;font-size:24px;line-height:1}
+  .gauge .lab{font-family:"Space Mono",monospace;font-size:8px;letter-spacing:.12em;color:var(--encre-doux);text-transform:uppercase}
+  .verdict h2{font-size:21px;margin-bottom:3px}
+  .verdict p{margin:0;font-size:13px;color:var(--encre-doux)}
+
+  /* ---- ribbon ---- */
+  .ribbon-wrap{margin-top:14px}
+  .ribbon-leg{display:flex;flex-wrap:wrap;gap:10px 14px;margin-top:9px}
+  .ribbon-leg span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:var(--encre-doux)}
+  .dot{width:11px;height:11px;border-radius:3px;flex:none}
+
+  /* ---- essentials strip ---- */
+  .strip{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin:14px 0}
+  .pill{background:rgba(255,255,255,.16);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.22);border-radius:16px;padding:11px 6px;text-align:center;color:#fff}
+  .pill .k{font-family:"Space Mono",monospace;font-size:9px;letter-spacing:.1em;text-transform:uppercase;opacity:.85}
+  .pill .v{font-family:"Fraunces",serif;font-weight:900;font-size:19px;margin-top:3px}
+  .pill .u{font-size:9px;opacity:.85}
+
+  /* ---- nav tiles ---- */
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .tile{position:relative;text-align:left;cursor:pointer;border:1px solid var(--sable-bord);background:var(--sable);border-radius:var(--r);padding:15px;box-shadow:var(--sh-s);transition:transform .12s ease,box-shadow .12s ease}
+  .tile:active{transform:scale(.975)}
+  .tile .ico{font-size:26px;line-height:1}
+  .tile h3{font-size:18px;margin-top:9px}
+  .tile .sub{font-size:12px;color:var(--encre-doux);margin-top:3px;min-height:32px}
+  .tile .go{position:absolute;top:14px;right:14px;color:var(--lagon);font-size:18px;font-weight:700}
+  .tile.accent{background:linear-gradient(160deg,#fff,#FFF3EE);border-color:#FAD9CD}
+
+  /* ---- detail pages ---- */
+  .page{display:none}
+  .page.on{display:block;animation:slide .28s cubic-bezier(.2,.7,.2,1)}
+  @keyframes slide{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+  .back{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.18);backdrop-filter:blur(6px);color:#fff;border:none;border-radius:30px;padding:8px 16px 8px 12px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:14px}
+  .ph{color:#fff;margin:2px 4px 16px}
+  .ph h2{font-size:27px}
+  .ph p{margin:6px 0 0;opacity:.9;font-size:13px}
+  .sec{margin-bottom:14px}
+  .sec h3{font-size:16px;margin-bottom:4px}
+
+  /* date nav */
+  .datenav{display:flex;align-items:center;justify-content:space-between;gap:10px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);border-radius:16px;padding:8px 8px;margin-bottom:14px;color:#fff;backdrop-filter:blur(8px)}
+  .datenav button{appearance:none;border:none;background:rgba(255,255,255,.2);color:#fff;width:38px;height:38px;border-radius:12px;font-size:18px;cursor:pointer}
+  .datenav .lab{text-align:center;flex:1}
+  .datenav .lab b{font-family:"Fraunces",serif;font-size:16px;text-transform:capitalize;display:block}
+  .datenav .lab small{font-family:"Space Mono",monospace;font-size:10px;opacity:.85}
+
+  /* data rows */
+  .rows{display:grid;gap:1px;background:var(--sable-bord);border-radius:14px;overflow:hidden}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--sable);padding:12px 14px}
+  .row .lbl{font-size:13px;color:var(--encre-doux)}
+  .row .num{font-family:"Space Mono",monospace;font-weight:700;font-size:15px;text-align:right}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat{background:var(--sable);border:1px solid var(--sable-bord);border-radius:14px;padding:12px}
+  .stat .k{font-family:"Space Mono",monospace;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--encre-doux)}
+  .stat .v{font-family:"Fraunces",serif;font-weight:900;font-size:22px;margin-top:4px}
+  .stat .v small{font-size:12px;font-weight:600;color:var(--encre-doux)}
+
+  /* forecast scroller */
+  .scroll{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .scroll::-webkit-scrollbar{display:none}
+  .fc{flex:none;width:84px;background:var(--sable);border:1px solid var(--sable-bord);border-radius:16px;padding:11px 8px;text-align:center}
+  .fc .d{font-family:"Space Mono",monospace;font-size:10px;text-transform:uppercase;color:var(--encre-doux)}
+  .fc .em{font-size:24px;margin:5px 0}
+  .fc .t{font-family:"Space Mono",monospace;font-size:13px;font-weight:700}
+  .fc .t small{color:var(--encre-doux)}
+  .fc .w{font-size:10px;color:var(--encre-doux);margin-top:4px}
+  .fc .idx{margin-top:6px;height:5px;border-radius:3px;background:var(--sable-bord);overflow:hidden}
+  .fc .idx i{display:block;height:100%}
+
+  /* mini bars (rain) */
+  .bars{display:flex;align-items:flex-end;gap:5px;height:90px;padding-top:8px}
+  .bars .b{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%}
+  .bars .b i{width:100%;max-width:18px;background:linear-gradient(180deg,var(--lagon),#0E86A0);border-radius:5px 5px 0 0;min-height:2px}
+  .bars .b i.fut{background:linear-gradient(180deg,var(--lagon-clair),var(--lagon));opacity:.55}
+  .bars .b .bd{font-family:"Space Mono",monospace;font-size:8px;color:var(--encre-doux);margin-top:4px}
+  .bars .b .bv{font-family:"Space Mono",monospace;font-size:8px;color:var(--encre);margin-bottom:3px;height:11px}
+
+  /* fish */
+  .fish{border:1px solid var(--sable-bord);border-radius:16px;overflow:hidden;margin-bottom:11px;background:var(--sable)}
+  .fish .head{display:flex;align-items:center;gap:12px;padding:13px 14px;cursor:pointer}
+  .fish .av{width:48px;height:42px;border-radius:12px;flex:none;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#EAF6F4,#D7EEEA);padding:5px;overflow:hidden}
+  .fish .av svg{width:100%;height:100%}
+  .fishfig{position:relative;border-radius:14px;overflow:hidden;background:linear-gradient(160deg,#EAF6F4,#CDE9E6);margin:12px 0 6px;aspect-ratio:16/7;display:flex;align-items:center;justify-content:center;border:1px solid var(--sable-bord)}
+  .fishfig svg{width:60%;height:78%}
+  .fishfig img.userphoto{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .figcap{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 8px}
+  .figcap small{font-size:10.5px;color:var(--encre-doux)}
+  .figbtn{font-family:"Space Mono",monospace;font-size:10px;font-weight:700;border:1px solid var(--sable-bord);background:#fff;border-radius:20px;padding:5px 9px;cursor:pointer;color:var(--encre)}
+  .figbtn:active{background:var(--sable-bord)}
+  .glossary .ge{padding:8px 0;border-bottom:1px dashed var(--sable-bord)}
+  .glossary .ge:last-child{border-bottom:none}
+  .glossary .gt{font-family:"Space Mono",monospace;font-weight:700;font-size:12.5px;color:var(--encre)}
+  .glossary .gd{font-size:12.5px;color:var(--encre-doux)}
+  .fish .nm{flex:1;min-width:0}
+  .fish .nm b{font-family:"Fraunces",serif;font-size:16px;font-weight:600;display:block}
+  .fish .nm i{font-style:italic;font-size:11.5px;color:var(--encre-doux)}
+  .fish .nm .loc{font-family:"Space Mono",monospace;font-size:10px;color:var(--lagon);font-weight:700;letter-spacing:.04em}
+  .fish .chev{color:var(--encre-doux);transition:transform .2s}
+  .fish.open .chev{transform:rotate(90deg)}
+  .fish .body{display:none;padding:0 14px 14px;border-top:1px solid var(--sable-bord)}
+  .fish.open .body{display:block}
+  .kv{display:flex;gap:8px;padding:7px 0;font-size:13px;border-bottom:1px dashed var(--sable-bord)}
+  .kv:last-child{border-bottom:none}
+  .kv .kk{font-family:"Space Mono",monospace;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-doux);width:84px;flex:none;padding-top:2px}
+  .kv .vv{flex:1}
+  .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .badge{font-family:"Space Mono",monospace;font-size:10px;font-weight:700;letter-spacing:.04em;padding:4px 9px;border-radius:30px}
+  .b-ok{background:#DBF3E6;color:#127A47}
+  .b-warn{background:#FCEBC9;color:#8A5800}
+  .b-danger{background:#FBDAD8;color:#A21F1C}
+  .b-protect{background:#D8ECF6;color:#0C5878}
+  .b-info{background:#E7E0F2;color:#5B3E8F}
+
+  /* technique block */
+  .tech{border:1px solid var(--sable-bord);border-radius:16px;background:var(--sable);margin-bottom:11px;overflow:hidden}
+  .tech .th{display:flex;align-items:center;gap:11px;padding:13px 14px;cursor:pointer}
+  .tech .th .ti{font-size:22px}
+  .tech .th b{font-family:"Fraunces",serif;font-size:16px;font-weight:600;flex:1}
+  .tech .th .chev{color:var(--encre-doux);transition:transform .2s}
+  .tech.open .chev{transform:rotate(90deg)}
+  .tech .tb{display:none;padding:0 14px 14px}
+  .tech.open .tb{display:block}
+
+  .note{background:#FFF3EE;border:1px solid #FAD9CD;border-radius:14px;padding:13px;font-size:12.5px;color:#7A2E18;margin-top:12px}
+  .note b{color:var(--corail-fonce)}
+  .danger{background:#FBE9E8;border:1px solid #F3C6C4;color:#8A1F1C}
+  .danger b{color:var(--alerte)}
+
+  .banner{background:rgba(214,58,54,.95);color:#fff;border-radius:14px;padding:11px 14px;font-size:12.5px;margin-bottom:14px;display:none}
+  .banner.on{display:block}
+  .banner button{background:#fff;color:var(--alerte);border:none;border-radius:20px;padding:5px 13px;font-weight:700;font-size:12px;margin-left:8px;cursor:pointer}
+
+  .foot{color:rgba(255,255,255,.78);font-size:11px;text-align:center;margin-top:24px;line-height:1.6}
+  .foot a{color:#fff}
+
+  /* settings sheet */
+  .sheet{position:fixed;inset:0;background:rgba(3,25,36,.55);display:none;align-items:flex-end;justify-content:center;z-index:50}
+  .sheet.on{display:flex}
+  .sheet .inner{background:var(--sable);width:100%;max-width:520px;border-radius:22px 22px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom))}
+  .sheet h3{font-size:18px;margin-bottom:12px}
+  .field{margin-bottom:11px}
+  .field label{font-family:"Space Mono",monospace;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--encre-doux);display:block;margin-bottom:5px}
+  .field input{width:100%;font-family:"Space Mono",monospace;font-size:15px;padding:11px 12px;border:1px solid var(--sable-bord);border-radius:12px;background:#fff}
+  .btnrow{display:flex;gap:10px;margin-top:14px}
+  .btn{flex:1;border:none;border-radius:14px;padding:13px;font-weight:700;font-size:14px;cursor:pointer}
+  .btn-1{background:var(--ocean);color:#fff}
+  .btn-2{background:var(--sable-bord);color:var(--encre)}
+  .skl{color:var(--encre-doux);opacity:.5}
+  @media (prefers-reduced-motion:reduce){.page.on{animation:none}}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="top">
+    <h1 class="place">Aratika<small>Tuamotu · Polynésie fr.</small></h1>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+      <button class="gear" id="gearBtn" aria-label="Réglages">⚙</button>
+      <div class="topdate" id="topDate">—</div>
+    </div>
+  </div>
+
+  <div class="banner" id="banner"></div>
+
+  <!-- ============ ACCUEIL ============ -->
+  <div class="page on" id="p-home">
+    <div class="card verdict">
+      <div class="pad">
+        <div class="gauge" id="gauge"></div>
+        <div>
+          <div class="eyebrow">Indice de pêche · aujourd'hui</div>
+          <h2 id="verdictTitle">Lecture des conditions…</h2>
+          <p id="verdictSub">Éphémérides, vent, houle et lune.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card ribbon-wrap">
+      <div class="pad">
+        <div class="eyebrow">Fenêtres de mordant · 24 h</div>
+        <div id="ribbonHome" style="margin-top:9px"></div>
+        <div class="ribbon-leg">
+          <span><i class="dot" style="background:var(--corail)"></i>Solunaire majeur</span>
+          <span><i class="dot" style="background:#FFB59E"></i>Solunaire mineur</span>
+          <span><i class="dot" style="background:var(--soleil)"></i>Lever / coucher soleil</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="strip" id="strip">
+      <div class="pill"><div class="k">Vent</div><div class="v" id="sVent">—</div><div class="u" id="sVentU">nœuds</div></div>
+      <div class="pill"><div class="k">Houle</div><div class="v" id="sHoule">—</div><div class="u">m</div></div>
+      <div class="pill"><div class="k">Eau</div><div class="v" id="sEau">—</div><div class="u">°C</div></div>
+      <div class="pill"><div class="k">Pluie</div><div class="v" id="sPluie">—</div><div class="u">mm/j</div></div>
+    </div>
+
+    <div class="tiles">
+      <button class="tile" data-go="ephe">
+        <span class="go">›</span><div class="ico">🌙</div>
+        <h3>Éphémérides</h3>
+        <div class="sub" id="tEphe">Soleil, lune, fenêtres solunaires…</div>
+      </button>
+      <button class="tile" data-go="meteo">
+        <span class="go">›</span><div class="ico">⛅</div>
+        <h3>Météo</h3>
+        <div class="sub" id="tMeteo">Aujourd'hui + 5 jours, vent & houle…</div>
+      </button>
+      <button class="tile" data-go="poissons">
+        <span class="go">›</span><div class="ico">🐟</div>
+        <h3>Poissons</h3>
+        <div class="sub" id="tPoissons">Espèces du lagon & des passes…</div>
+      </button>
+      <button class="tile accent" data-go="peche">
+        <span class="go">›</span><div class="ico">🎣</div>
+        <h3>Pêche</h3>
+        <div class="sub" id="tPeche">Techniques, matériel, courants…</div>
+      </button>
+    </div>
+
+    <div class="foot">
+      Données météo & marine : Open-Meteo · Éphémérides : calcul local (SunCalc).<br>
+      Pluviométrie de référence : modèle sur la zone de Fakarava.
+    </div>
+  </div>
+
+  <!-- ============ ÉPHÉMÉRIDES ============ -->
+  <div class="page" id="p-ephe">
+    <button class="back" data-back>‹ Accueil</button>
+    <div class="ph"><h2>Éphémérides</h2><p>Soleil, lune et fenêtres solunaires pour Aratika. Naviguez dans les jours passés et à venir.</p></div>
+
+    <div class="datenav">
+      <button id="ephPrev">‹</button>
+      <div class="lab"><b id="ephLabel">—</b><small id="ephSub">—</small></div>
+      <button id="ephNext">›</button>
+    </div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow">Fenêtres de mordant · 24 h</div>
+      <div id="ribbonEphe" style="margin-top:9px"></div>
+      <div class="ribbon-leg">
+        <span><i class="dot" style="background:var(--corail)"></i>Majeur (lune au zénith / nadir)</span>
+        <span><i class="dot" style="background:#FFB59E"></i>Mineur (lever / coucher lune)</span>
+        <span><i class="dot" style="background:var(--soleil)"></i>Aube / crépuscule</span>
+      </div>
+    </div></div>
+
+    <div class="sec">
+      <div class="grid2">
+        <div class="stat"><div class="k">☀ Lever soleil</div><div class="v" id="eSunrise">—</div></div>
+        <div class="stat"><div class="k">☀ Coucher soleil</div><div class="v" id="eSunset">—</div></div>
+        <div class="stat"><div class="k">🌙 Phase lune</div><div class="v" id="eMoonPhase" style="font-size:16px">—</div></div>
+        <div class="stat"><div class="k">🌙 Éclairée</div><div class="v" id="eMoonIllum">—<small>%</small></div></div>
+      </div>
+    </div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow">Marées · modèle solaire (indicatif)</div>
+      <div id="tideCurve" style="margin-top:10px"></div>
+      <div class="rows" id="tideRows" style="margin-top:12px"></div>
+      <p class="muted" style="font-size:11.5px;margin:11px 0 0">En Polynésie, la marée est faible (~30 cm) et surtout <b>solaire</b> : pleine mer vers midi et minuit, basse mer vers l'aube et le crépuscule — presque à heure fixe. Le <b>flot</b> (BM→PM) remplit le lagon ; le <b>jusant</b> (PM→BM) le vide par les passes. Pour les hauteurs exactes, voir l'annuaire des marées du SHOM (maree.shom.fr).</p>
+    </div></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:8px">Détail du jour</div>
+      <div class="rows" id="epheRows"></div>
+    </div></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:8px">Lune · 14 prochains jours</div>
+      <div class="scroll" id="moonCal"></div>
+      <p class="muted" style="font-size:11.5px;margin:10px 0 0">Nouvelle lune et pleine lune sont les périodes les plus actives. Les meilleurs créneaux combinent une fenêtre solunaire majeure avec l'aube ou le crépuscule.</p>
+    </div></div>
+  </div>
+
+  <!-- ============ MÉTÉO ============ -->
+  <div class="page" id="p-meteo">
+    <button class="back" data-back>‹ Accueil</button>
+    <div class="ph"><h2>Météo</h2><p>Conditions sur Aratika — aujourd'hui et 5 jours à venir. Vent, houle, températures et pluies.</p></div>
+
+    <div class="card sec"><div class="pad">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="font-size:48px" id="mNowEm">⛅</div>
+        <div style="flex:1">
+          <div class="eyebrow">Maintenant</div>
+          <div style="font-family:'Fraunces';font-weight:900;font-size:34px;line-height:1" id="mNowTemp">—°</div>
+          <div class="muted" style="font-size:13px" id="mNowDesc">—</div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:14px">
+        <div class="stat"><div class="k">Ressenti</div><div class="v" id="mFeel">—°</div></div>
+        <div class="stat"><div class="k">Humidité</div><div class="v" id="mHum">—<small>%</small></div></div>
+      </div>
+    </div></div>
+
+    <div class="sec">
+      <div class="eyebrow" style="color:#fff;margin:0 4px 8px">Prévision 6 jours</div>
+      <div class="scroll" id="mForecast"></div>
+    </div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:8px">Vent</div>
+      <div class="rows">
+        <div class="row"><span class="lbl">Vitesse moyenne (auj.)</span><span class="num" id="wAvg">—</span></div>
+        <div class="row"><span class="lbl">Rafales (auj.)</span><span class="num" id="wGust">—</span></div>
+        <div class="row"><span class="lbl">Direction dominante</span><span class="num" id="wDir">—</span></div>
+        <div class="row"><span class="lbl">Régime indicatif</span><span class="num" id="wLocal" style="font-size:13px">—</span></div>
+      </div>
+    </div></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:8px">Houle & mer</div>
+      <div class="rows">
+        <div class="row"><span class="lbl">Hauteur de houle (auj.)</span><span class="num" id="hH">—</span></div>
+        <div class="row"><span class="lbl">Période de houle</span><span class="num" id="hP">—</span></div>
+        <div class="row"><span class="lbl">Direction de houle</span><span class="num" id="hD">—</span></div>
+        <div class="row"><span class="lbl">Température de l'eau</span><span class="num" id="hT">—</span></div>
+      </div>
+      <p class="muted" style="font-size:11.5px;margin:10px 0 0">Sur un atoll, la houle qui passe par-dessus le platier extérieur alimente le courant des passes — surveillez-la autant que la marée, qui reste faible (~30 cm).</p>
+    </div></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow">Pluviométrie · zone de Fakarava</div>
+      <p class="muted" style="font-size:11.5px;margin:6px 0 0">14 derniers jours + 3 jours à venir (mm/jour).</p>
+      <div class="bars" id="rainBars" style="margin-top:8px"></div>
+      <div class="rows" style="margin-top:12px">
+        <div class="row"><span class="lbl">Cumul 14 derniers jours</span><span class="num" id="rSum">—</span></div>
+        <div class="row"><span class="lbl">Jour le plus arrosé</span><span class="num" id="rMax" style="font-size:13px">—</span></div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ============ POISSONS ============ -->
+  <div class="page" id="p-poissons">
+    <button class="back" data-back>‹ Accueil</button>
+    <div class="ph"><h2>Poissons</h2><p>Espèces des lagons et passes des Tuamotu. Touchez une fiche pour les détails, le matériel et le risque ciguatérique.</p></div>
+    <div id="fishList"></div>
+    <div class="note">
+      <b>Noms locaux —</b> les appellations paumotu/tahitiennes varient selon les îles ; vérifiez auprès des habitants. Le risque de <b>ciguatera (« la gratte »)</b> dépend fortement du platier et de la passe : une zone peut être toxique et la voisine non. Demandez toujours aux pêcheurs d'Aratika les secteurs réputés « graty ».
+    </div>
+  </div>
+
+  <!-- ============ PÊCHE ============ -->
+  <div class="page" id="p-peche">
+    <button class="back" data-back>‹ Accueil</button>
+    <div class="ph"><h2>Pêche</h2><p>Techniques adaptées au lagon, aux passes et au récif extérieur d'un atoll des Tuamotu — avec le matériel conseillé.</p></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:6px">La clé : le courant de la passe</div>
+      <p style="font-size:13px;margin:0">Sur un atoll, la marée astronomique est faible. Le moteur de la pêche, c'est le <b>courant de passe</b>, surtout alimenté par la houle qui remplit le lagon par-dessus le récif.</p>
+      <div class="rows" style="margin-top:11px">
+        <div class="row"><span class="lbl">🌊 Courant entrant (flot)</span><span class="num" style="font-size:12px;text-align:right;max-width:60%">Eau océanique claire & oxygénée — prédateurs en embuscade côté lagon</span></div>
+        <div class="row"><span class="lbl">🌊 Courant sortant (jusant)</span><span class="num" style="font-size:12px;text-align:right;max-width:60%">Expulse les proies du lagon — carangues, jobs & requins en chasse à la sortie</span></div>
+        <div class="row"><span class="lbl">⏱ Meilleurs moments</span><span class="num" style="font-size:12px;text-align:right;max-width:60%">Étales (changements) et premières heures de courant, au lever/coucher</span></div>
+      </div>
+    </div></div>
+
+    <div class="eyebrow" style="color:#fff;margin:2px 4px 8px">Techniques</div>
+    <div id="techList"></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow">Glossaire</div>
+      <p class="muted" style="font-size:11.5px;margin:5px 0 2px">Les termes utiles, du platier au matériel.</p>
+      <div class="glossary" id="glossary"></div>
+    </div></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:6px">Réglementation · Polynésie française</div>
+      <p style="font-size:12.5px;margin:0">Indicatif — vérifiez les règles à jour auprès de la Direction des ressources marines (DRM) et respectez les <b>rāhui</b> locaux d'Aratika.</p>
+      <div class="badges" style="margin-top:10px">
+        <span class="badge b-protect">Requins protégés</span>
+        <span class="badge b-protect">Raies / mantas protégées</span>
+        <span class="badge b-protect">Tortues protégées</span>
+        <span class="badge b-protect">Mammifères marins protégés</span>
+        <span class="badge b-protect">Napoléon (mara) réglementé</span>
+        <span class="badge b-warn">Tailles minimales</span>
+        <span class="badge b-danger">Poison & explosifs interdits</span>
+      </div>
+    </div></div>
+
+    <div class="card sec"><div class="pad danger" style="border-radius:14px">
+      <div class="eyebrow" style="color:var(--alerte);margin-bottom:6px">⚠ Ciguatera — « la gratte »</div>
+      <p style="font-size:12.5px;margin:0 0 8px">Toxine accumulée par les gros carnivores du lagon. <b>La cuisson ne la détruit pas.</b> À risque : grosses loches/mérous, grosses carangues, murènes, barracudas, vivaneau chien (bohar), Napoléon. Plus sûrs : pélagiques (thon, wahoo, mahi mahi, job gris) et petits sujets.</p>
+      <p style="font-size:12.5px;margin:0">Symptômes : fourmillements, inversion chaud/froid, troubles digestifs. <b>Demandez aux habitants</b> les platiers/passes « graty » — c'est très local. En cas de doute, relâchez.</p>
+    </div></div>
+
+    <div class="card sec"><div class="pad">
+      <div class="eyebrow" style="margin-bottom:6px">Sécurité</div>
+      <p style="font-size:12.5px;margin:0">Gilet et VHF à bord. Les passes deviennent dangereuses au jusant fort contre une houle qui entre. Surveillez le courant et la houle au récif extérieur. Soleil, eau, et chapeau — le platier ne pardonne pas à midi.</p>
+    </div></div>
+  </div>
+
+  <div class="foot" id="globalFoot"></div>
+</div>
+
+<!-- settings sheet -->
+<div class="sheet" id="sheet">
+  <div class="inner">
+    <h3>Réglages</h3>
+    <div class="field"><label>Latitude (Aratika)</label><input id="inLat" type="text" inputmode="decimal"></div>
+    <div class="field"><label>Longitude (Aratika)</label><input id="inLon" type="text" inputmode="decimal"></div>
+    <p class="muted" style="font-size:11.5px;margin:0">Affinez sur votre passe ou votre pension. Valeurs par défaut : −15.51, −145.48.</p>
+    <div class="btnrow">
+      <button class="btn btn-2" id="sheetCancel">Annuler</button>
+      <button class="btn btn-1" id="sheetSave">Enregistrer & actualiser</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------- config & state ---------- */
+var DEF = { lat:-15.51, lon:-145.48 };
+var FAK = { lat:-16.05, lon:-145.62 }; // Fakarava (référence pluviométrie)
+var TZ = "Pacific/Tahiti";
+var store = safeStore();
+var CFG = loadCfg();
+var DATA = { wx:null, mar:null, fak:null, err:false };
+var epheOffset = 0;
+
+function safeStore(){ try{ var k="__t";localStorage.setItem(k,"1");localStorage.removeItem(k);return localStorage;}catch(e){return null;} }
+function loadCfg(){ try{ var c=store&&JSON.parse(store.getItem("aratika_cfg")); if(c&&c.lat&&c.lon) return c; }catch(e){} return {lat:DEF.lat,lon:DEF.lon}; }
+function saveCfg(c){ CFG=c; try{ store&&store.setItem("aratika_cfg",JSON.stringify(c)); }catch(e){} }
+function cacheSet(k,v){ try{ store&&store.setItem("aratika_"+k,JSON.stringify({t:Date.now(),v:v})); }catch(e){} }
+function cacheGet(k){ try{ var o=store&&JSON.parse(store.getItem("aratika_"+k)); return o; }catch(e){ return null; } }
+
+/* ---------- helpers ---------- */
+function $(id){ return document.getElementById(id); }
+function fmtTime(d){ if(!d||isNaN(d)) return "—"; return d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",hour12:false,timeZone:TZ}); }
+function pad2(n){ return (n<10?"0":"")+n; }
+function round(n,d){ var f=Math.pow(10,d||0); return Math.round(n*f)/f; }
+function cap(s){ return s? s.charAt(0).toUpperCase()+s.slice(1):s; }
+
+function tahitiYMD(offset){
+  var now = new Date();
+  var s = new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit"}).format(now);
+  var p = s.split("-");
+  var baseMidnightUTC = Date.UTC(+p[0], +p[1]-1, +p[2], 10, 0, 0); // local 00:00 == UTC 10:00 (UTC-10)
+  return baseMidnightUTC + (offset||0)*86400000;
+}
+function dirFR(deg){
+  if(deg==null||isNaN(deg)) return "—";
+  var names=["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSO","SO","OSO","O","ONO","NO","NNO"];
+  return names[Math.round(((deg%360)/22.5))%16];
+}
+function ventLocal(deg){
+  if(deg==null||isNaN(deg)) return "—";
+  deg=(deg%360+360)%360;
+  if(deg>=70 && deg<170) return "Alizés (secteur E–SE)";
+  if(deg>=170 && deg<250) return "Maraʻamu (secteur sud)";
+  if(deg>=250 && deg<340) return "Toʻerau (secteur O–N)";
+  return "Toʻerau (secteur N–NE)";
+}
+function wmo(c){
+  var m={0:["Ciel clair","☀"],1:["Peu nuageux","🌤"],2:["Partiellement nuageux","⛅"],3:["Couvert","☁"],
+    45:["Brume","🌫"],48:["Brouillard givrant","🌫"],51:["Bruine faible","🌦"],53:["Bruine","🌦"],55:["Bruine forte","🌧"],
+    61:["Pluie faible","🌦"],63:["Pluie","🌧"],65:["Pluie forte","🌧"],66:["Pluie verglaçante","🌧"],67:["Pluie verglaçante","🌧"],
+    71:["Neige","🌨"],73:["Neige","🌨"],75:["Neige","🌨"],80:["Averses faibles","🌦"],81:["Averses","🌧"],82:["Averses violentes","⛈"],
+    85:["Averses neigeuses","🌨"],86:["Averses neigeuses","🌨"],95:["Orage","⛈"],96:["Orage & grêle","⛈"],99:["Orage & grêle","⛈"]};
+  return m[c]||["—","🌡"];
+}
+var MOON_FR=[
+  {n:"Nouvelle lune",e:"🌑"},{n:"Premier croissant",e:"🌒"},{n:"Premier quartier",e:"🌓"},
+  {n:"Lune gibbeuse croiss.",e:"🌔"},{n:"Pleine lune",e:"🌕"},{n:"Lune gibbeuse décroiss.",e:"🌖"},
+  {n:"Dernier quartier",e:"🌗"},{n:"Dernier croissant",e:"🌘"}
+];
+function moonName(phase){ // phase 0..1 (SunCalc)
+  var i=Math.round(phase*8)%8; return MOON_FR[i];
+}
+
+/* ---------- astronomy (per local day) ---------- */
+function dayAstro(offset){
+  var midUTC = tahitiYMD(offset);
+  var noon = new Date(midUTC + 12*3600000); // local noon, for correct day selection
+  var lat=CFG.lat, lon=CFG.lon;
+  var sun = SunCalc.getTimes(noon, lat, lon);
+  var mt = SunCalc.getMoonTimes(noon, lat, lon, false);
+  var illum = SunCalc.getMoonIllumination(noon);
+  // sample moon altitude across the local day to find transit (max) & antitransit (min)
+  var step=5*60000, best={alt:-99,t:null}, worst={alt:99,t:null};
+  for(var t=midUTC; t<=midUTC+86400000; t+=step){
+    var d=new Date(t);
+    var pos=SunCalc.getMoonPosition(d, lat, lon);
+    if(pos.altitude>best.alt){ best={alt:pos.altitude,t:d}; }
+    if(pos.altitude<worst.alt){ worst={alt:pos.altitude,t:d}; }
+  }
+  return {
+    midUTC:midUTC, sunrise:sun.sunrise, sunset:sun.sunset, solarNoon:sun.solarNoon, nadir:sun.nadir,
+    dawn:sun.dawn, dusk:sun.dusk,
+    moonrise:mt.rise, moonset:mt.set, moonAlwaysUp:mt.alwaysUp, moonAlwaysDown:mt.alwaysDown,
+    illum:illum.fraction, phase:illum.phase,
+    transit: best.alt>0? best.t : null, transitAlt:best.alt,
+    antitransit: worst.t
+  };
+}
+
+// minutes since local midnight for a Date, given local-midnight-as-UTC ms
+function minOfDay(d, midUTC){ if(!d) return null; var m=(d.getTime()-midUTC)/60000; if(m<0||m>1440) return null; return m; }
+
+function solunarWindows(a){
+  var W=[];
+  function add(center,half,kind){ if(center==null) return; var c=minOfDay(center,a.midUTC); if(c==null) return; W.push({s:Math.max(0,c-half),e:Math.min(1440,c+half),kind:kind}); }
+  add(a.transit,60,"maj");
+  add(a.antitransit,60,"maj");
+  add(a.moonrise,45,"min");
+  add(a.moonset,45,"min");
+  return W;
+}
+
+/* ---------- fishing index (heuristic) ---------- */
+function fishingIndex(offset, a){
+  // moon factor: new & full best (0..1)
+  var moon = Math.abs(a.illum-0.5)*2; // 1 at new/full, 0 at quarter
+  // solunar overlap with golden hours
+  var W = solunarWindows(a);
+  var golden=[];
+  var sr=minOfDay(a.sunrise,a.midUTC), ss=minOfDay(a.sunset,a.midUTC);
+  if(sr!=null) golden.push([sr-45,sr+60]);
+  if(ss!=null) golden.push([ss-60,ss+45]);
+  var overlap=0;
+  for(var i=0;i<W.length;i++){ if(W[i].kind!=="maj") continue;
+    for(var j=0;j<golden.length;j++){ var lo=Math.max(W[i].s,golden[j][0]), hi=Math.min(W[i].e,golden[j][1]); if(hi>lo) overlap+=(hi-lo); } }
+  var ovScore = Math.min(1, overlap/90);
+  // weather (only if available for this offset)
+  var wScore=0.6, swScore=0.6, rScore=0.8, hasWx=false;
+  if(DATA.wx && DATA.wx.daily){
+    var di = DATA.wx.daily.time.indexOf(ymdLocal(offset));
+    if(di>=0){
+      hasWx=true;
+      var wind = DATA.wx.daily.wind_speed_10m_max[di];
+      var rain = DATA.wx.daily.precipitation_sum[di];
+      wScore = wind<=12?1 : wind<=18?0.75 : wind<=24?0.5 : wind<=30?0.3:0.15;
+      rScore = rain<2?1 : rain<8?0.8 : rain<20?0.5:0.3;
+      if(DATA.mar && DATA.mar.daily){
+        var swh = DATA.mar.daily.swell_wave_height_max[di];
+        if(swh!=null) swScore = (swh>=0.6&&swh<=2)?1 : swh<0.6?0.7 : swh<=3?0.6:0.35;
+      }
+    }
+  }
+  var score;
+  if(hasWx){
+    score = 0.26*moon + 0.24*ovScore + 0.22*wScore + 0.14*swScore + 0.14*rScore;
+  } else {
+    score = 0.55*moon + 0.45*ovScore;
+  }
+  return Math.round(score*100);
+}
+function ymdLocal(offset){
+  var ms=tahitiYMD(offset);
+  var d=new Date(ms+12*3600000);
+  return new Intl.DateTimeFormat("en-CA",{timeZone:TZ,year:"numeric",month:"2-digit",day:"2-digit"}).format(d);
+}
+function idxColor(v){ return v>=70? "var(--recif)" : v>=45? "var(--soleil)" : "var(--corail)"; }
+function idxWord(v){ return v>=78?"Excellent":v>=62?"Très bon":v>=45?"Correct":v>=30?"Moyen":"Difficile"; }
+
+/* ---------- ribbon (SVG) ---------- */
+function ribbon(a, withNow){
+  var W=720,H=58, midUTC=a.midUTC;
+  var sr=minOfDay(a.sunrise,midUTC), ss=minOfDay(a.sunset,midUTC);
+  function x(m){ return (m/1440)*W; }
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;border-radius:12px;overflow:hidden">';
+  // base night
+  svg+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#0B3245"/>';
+  // day band
+  if(sr!=null&&ss!=null) svg+='<rect x="'+x(sr)+'" y="0" width="'+(x(ss)-x(sr))+'" height="'+H+'" fill="#1C7E97"/>';
+  // golden hours
+  function gold(c){ if(c==null)return; svg+='<rect x="'+x(c-45)+'" y="0" width="'+(x(90))+'" height="'+H+'" fill="#F6B53C" opacity="0.55"/>'; }
+  gold(sr); gold(ss);
+  // solunar windows
+  var Wd=solunarWindows(a);
+  for(var i=0;i<Wd.length;i++){ var w=Wd[i];
+    var col = w.kind==="maj"? "#FF6B4A":"#FFB59E";
+    var op = w.kind==="maj"? 0.92:0.7;
+    var yy = w.kind==="maj"? 6:14, hh = w.kind==="maj"? H-12:H-28;
+    svg+='<rect x="'+x(w.s)+'" y="'+yy+'" width="'+(x(w.e)-x(w.s))+'" height="'+hh+'" rx="4" fill="'+col+'" opacity="'+op+'"/>';
+  }
+  // hour ticks
+  for(var h=0;h<=24;h+=6){ var xx=x(h*60); svg+='<line x1="'+xx+'" y1="0" x2="'+xx+'" y2="'+H+'" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1"/>';
+    if(h<24) svg+='<text x="'+(xx+4)+'" y="'+(H-6)+'" fill="#ffffff" fill-opacity="0.7" font-family="Space Mono,monospace" font-size="11">'+pad2(h)+'h</text>'; }
+  // now line
+  if(withNow){ var nowM=minOfDay(new Date(), midUTC); if(nowM!=null){ svg+='<line x1="'+x(nowM)+'" y1="0" x2="'+x(nowM)+'" y2="'+H+'" stroke="#FFFFFF" stroke-width="2"/><circle cx="'+x(nowM)+'" cy="4" r="3.5" fill="#fff"/>'; } }
+  svg+='</svg>';
+  return svg;
+}
+
+/* ---------- tides (solar model — Polynésie) ---------- */
+// In French Polynesia the astronomical tide is small (~30 cm) and solar-dominated:
+// highs near solar noon & midnight, lows near dawn & dusk. Indicative, computed locally.
+function tidePhases(a){
+  var midUTC=a.midUTC;
+  var Ns = a.solarNoon ? ((a.solarNoon.getTime()-midUTC)/60000) : 720;
+  var nightHigh = a.nadir ? ((a.nadir.getTime()-midUTC)/60000) : (Ns-720);
+  var ph=[
+    {type:"PM", lbl:"Pleine mer", min:nightHigh},
+    {type:"BM", lbl:"Basse mer",  min:Ns-360},
+    {type:"PM", lbl:"Pleine mer", min:Ns},
+    {type:"BM", lbl:"Basse mer",  min:Ns+360}
+  ].filter(function(p){ return p.min>=-40 && p.min<=1480; });
+  ph.forEach(function(p){ p.min=Math.max(0,Math.min(1440,p.min)); p.t=new Date(midUTC+p.min*60000); });
+  ph.sort(function(x,y){ return x.min-y.min; });
+  return ph;
+}
+function tideCurve(a, withNow){
+  var W=720,H=74, midUTC=a.midUTC;
+  var Ns = a.solarNoon ? ((a.solarNoon.getTime()-midUTC)/60000) : 720;
+  var base=42, amp=20;
+  function x(m){ return (m/1440)*W; }
+  function y(m){ var L=Math.cos(2*Math.PI*((m-Ns)/720)); return base - amp*L; }
+  var d="M0,"+y(0).toFixed(1);
+  for(var m=8;m<=1440;m+=8){ d+=" L"+x(m).toFixed(1)+","+y(m).toFixed(1); }
+  var area=d+" L"+W+","+H+" L0,"+H+" Z";
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" width="100%" preserveAspectRatio="none" style="display:block;border-radius:12px;overflow:hidden;background:#EAF6F4">';
+  svg+='<path d="'+area+'" fill="#9ADDE3" opacity="0.75"/>';
+  svg+='<path d="'+d+'" fill="none" stroke="#0E86A0" stroke-width="2.5"/>';
+  // markers
+  var ph=tidePhases(a);
+  for(var i=0;i<ph.length;i++){ var p=ph[i]; var px=x(p.min), py=y(p.min);
+    svg+='<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="3.5" fill="#063A52"/>';
+    svg+='<text x="'+px.toFixed(1)+'" y="'+(p.type==="PM"?(py-7):(py+15)).toFixed(1)+'" text-anchor="middle" fill="#063A52" font-family="Space Mono,monospace" font-weight="700" font-size="11">'+p.type+'</text>';
+  }
+  for(var h=0;h<=24;h+=6){ var xx=x(h*60); svg+='<line x1="'+xx+'" y1="0" x2="'+xx+'" y2="'+H+'" stroke="#0E86A0" stroke-opacity="0.16"/>';
+    if(h<24) svg+='<text x="'+(xx+4)+'" y="13" fill="#0E86A0" fill-opacity="0.7" font-family="Space Mono,monospace" font-size="11">'+pad2(h)+'h</text>'; }
+  if(withNow){ var nm=minOfDay(new Date(),midUTC); if(nm!=null){ svg+='<line x1="'+x(nm)+'" y1="0" x2="'+x(nm)+'" y2="'+H+'" stroke="#FF6B4A" stroke-width="2"/>'; } }
+  svg+='</svg>';
+  return svg;
+}
+
+/* ---------- data fetch ---------- */
+function url(base,p){ var q=[]; for(var k in p) q.push(k+"="+encodeURIComponent(p[k])); return base+"?"+q.join("&"); }
+function getJSON(u){ return fetch(u).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); }); }
+
+function loadAll(){
+  setBanner(false);
+  var lat=CFG.lat, lon=CFG.lon;
+  var wxU = url("https://api.open-meteo.com/v1/forecast",{
+    latitude:lat, longitude:lon,
+    current:"temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+    daily:"weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,uv_index_max",
+    timezone:TZ, wind_speed_unit:"kn", forecast_days:7, past_days:2
+  });
+  var marU = url("https://marine-api.open-meteo.com/v1/marine",{
+    latitude:lat, longitude:lon,
+    current:"wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_period,swell_wave_direction,sea_surface_temperature",
+    daily:"wave_height_max,wave_direction_dominant,wave_period_max,swell_wave_height_max,swell_wave_period_max,swell_wave_direction_dominant",
+    timezone:TZ, forecast_days:7
+  });
+  var fakU = url("https://api.open-meteo.com/v1/forecast",{
+    latitude:FAK.lat, longitude:FAK.lon,
+    daily:"precipitation_sum,precipitation_probability_max,temperature_2m_max",
+    timezone:TZ, past_days:14, forecast_days:3
+  });
+
+  // show cached immediately if present
+  var cw=cacheGet("wx"), cm=cacheGet("mar"), cf=cacheGet("fak");
+  if(cw){ DATA.wx=cw.v; } if(cm){ DATA.mar=cm.v; } if(cf){ DATA.fak=cf.v; }
+  if(cw||cm||cf) renderAll();
+
+  Promise.allSettled([getJSON(wxU),getJSON(marU),getJSON(fakU)]).then(function(res){
+    var anyOk=false, anyFail=false;
+    if(res[0].status==="fulfilled"){ DATA.wx=res[0].value; cacheSet("wx",DATA.wx); anyOk=true; } else anyFail=true;
+    if(res[1].status==="fulfilled"){ DATA.mar=res[1].value; cacheSet("mar",DATA.mar); anyOk=true; } else anyFail=true;
+    if(res[2].status==="fulfilled"){ DATA.fak=res[2].value; cacheSet("fak",DATA.fak); anyOk=true; } else anyFail=true;
+    renderAll();
+    if(anyFail){
+      if(!anyOk && !(cw||cm||cf)) setBanner(true,"Pas de connexion — impossible de charger la météo. Réessayez près d'une borne réseau.");
+      else setBanner(true,"Réseau partiel — certaines données peuvent dater du dernier relevé.");
+    }
+  });
+}
+function setBanner(on,msg){
+  var b=$("banner");
+  if(!on){ b.classList.remove("on"); return; }
+  b.innerHTML = msg+' <button onclick="loadAll()">Réessayer</button>';
+  b.classList.add("on");
+}
+
+/* ---------- render ---------- */
+function renderAll(){ renderHome(); renderEphe(); renderMeteo(); }
+
+function renderHome(){
+  $("topDate").textContent = cap(new Date().toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",timeZone:TZ}));
+  var a=dayAstro(0);
+  var idx=fishingIndex(0,a);
+  // gauge
+  var col=idxColor(idx), C=2*Math.PI*30;
+  $("gauge").innerHTML=
+    '<svg viewBox="0 0 78 78" width="78" height="78"><circle cx="39" cy="39" r="30" fill="none" stroke="var(--sable-bord)" stroke-width="9"/>'+
+    '<circle cx="39" cy="39" r="30" fill="none" stroke="'+col+'" stroke-width="9" stroke-linecap="round" stroke-dasharray="'+C+'" stroke-dashoffset="'+(C*(1-idx/100))+'" transform="rotate(-90 39 39)"/></svg>'+
+    '<div class="val"><div class="num">'+idx+'</div><div class="lab">/100</div></div>';
+  $("verdictTitle").textContent=idxWord(idx)+" aujourd'hui";
+  // sub: best window
+  var best=bestWindowText(a);
+  $("verdictSub").textContent=best;
+  $("ribbonHome").innerHTML=ribbon(a,true);
+
+  // strip
+  if(DATA.wx&&DATA.wx.current){ var c=DATA.wx.current;
+    $("sVent").textContent=Math.round(c.wind_speed_10m);
+  }
+  if(DATA.wx&&DATA.wx.daily){ var di=DATA.wx.daily.time.indexOf(ymdLocal(0));
+    if(di>=0){ $("sPluie").textContent=round(DATA.wx.daily.precipitation_sum[di],1); }
+  }
+  if(DATA.mar&&DATA.mar.current){ var m=DATA.mar.current;
+    if(m.swell_wave_height!=null) $("sHoule").textContent=round(m.swell_wave_height,1);
+    if(m.sea_surface_temperature!=null) $("sEau").textContent=Math.round(m.sea_surface_temperature);
+  }
+
+  // tiles teasers
+  var mn=moonName(a.phase);
+  $("tEphe").textContent=mn.e+" "+mn.n+" · soleil "+fmtTime(a.sunrise)+"→"+fmtTime(a.sunset);
+  if(DATA.wx&&DATA.wx.current){ var cc=DATA.wx.current, w=wmo(cc.weather_code);
+    $("tMeteo").textContent=w[1]+" "+Math.round(cc.temperature_2m)+"° · vent "+Math.round(cc.wind_speed_10m)+" nds "+dirFR(cc.wind_direction_10m);
+  }
+  $("tPoissons").textContent=FISH.length+" espèces — carangues, kio kio, jobs, becs de cane…";
+  $("tPeche").textContent="Popping, jigging, mouche, traîne — et le courant de passe.";
+}
+
+function bestWindowText(a){
+  var W=solunarWindows(a).filter(function(w){return w.kind==="maj";});
+  if(!W.length) return "Lune basse aujourd'hui — misez sur l'aube et le crépuscule.";
+  // pick the major window closest to a golden hour, else earliest
+  var sr=minOfDay(a.sunrise,a.midUTC), ss=minOfDay(a.sunset,a.midUTC);
+  function scoreW(w){ var c=(w.s+w.e)/2, best=999; [sr,ss].forEach(function(g){ if(g!=null) best=Math.min(best,Math.abs(c-g)); }); return best; }
+  W.sort(function(p,q){ return scoreW(p)-scoreW(q); });
+  var w=W[0];
+  function hm(m){ var h=Math.floor(m/60), mm=Math.round(m%60); return pad2(h)+"h"+pad2(mm); }
+  var near = scoreW(w)<75? " (recoupe l'heure dorée)":"";
+  return "Meilleure fenêtre solunaire ≈ "+hm(w.s)+"–"+hm(w.e)+near+".";
+}
+
+function renderEphe(){
+  var a=dayAstro(epheOffset);
+  var d=new Date(a.midUTC+12*3600000);
+  $("ephLabel").textContent=cap(d.toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long",timeZone:TZ}));
+  $("ephSub").textContent= epheOffset===0?"Aujourd'hui": (epheOffset>0? "Dans "+epheOffset+" j":"Il y a "+(-epheOffset)+" j");
+  $("ribbonEphe").innerHTML=ribbon(a, epheOffset===0);
+  $("eSunrise").textContent=fmtTime(a.sunrise);
+  $("eSunset").textContent=fmtTime(a.sunset);
+  var mn=moonName(a.phase);
+  $("eMoonPhase").textContent=mn.e+" "+mn.n;
+  $("eMoonIllum").innerHTML=Math.round(a.illum*100)+'<small>%</small>';
+
+  var dayLen = (a.sunset && a.sunrise)? (a.sunset-a.sunrise)/3600000 : null;
+  function row(l,v){ return '<div class="row"><span class="lbl">'+l+'</span><span class="num">'+v+'</span></div>'; }
+  var rs="";
+  rs+=row("🌅 Aube","≈ "+fmtTime(a.dawn));
+  rs+=row("☀ Lever du soleil",fmtTime(a.sunrise));
+  rs+=row("🔆 Midi solaire",fmtTime(a.solarNoon));
+  rs+=row("🌇 Coucher du soleil",fmtTime(a.sunset));
+  rs+=row("🌆 Crépuscule","≈ "+fmtTime(a.dusk));
+  rs+=row("⏳ Durée du jour", dayLen!=null? round(dayLen,1)+" h":"—");
+  rs+=row("🌙 Lever de lune", a.moonAlwaysUp?"toute la nuit":(a.moonrise?fmtTime(a.moonrise):"—"));
+  rs+=row("🌙 Coucher de lune", a.moonAlwaysDown?"—":(a.moonset?fmtTime(a.moonset):"—"));
+  rs+=row("⬆ Lune au zénith (majeur)", a.transit?fmtTime(a.transit):"sous l'horizon");
+  rs+=row("⬇ Lune au nadir (majeur)", a.antitransit?fmtTime(a.antitransit):"—");
+  $("epheRows").innerHTML=rs;
+
+  // tides (solar model)
+  $("tideCurve").innerHTML=tideCurve(a, epheOffset===0);
+  var ph=tidePhases(a), tr="";
+  for(var ti=0;ti<ph.length;ti++){ var p=ph[ti];
+    var ico = p.type==="PM" ? "⬆ Pleine mer" : "⬇ Basse mer";
+    tr+='<div class="row"><span class="lbl">'+ico+'</span><span class="num">≈ '+fmtTime(p.t)+'</span></div>';
+  }
+  $("tideRows").innerHTML=tr;
+
+  // moon calendar 14 days
+  var mc="";
+  for(var i=0;i<14;i++){
+    var ai=dayAstro(epheOffset+i);
+    var m=moonName(ai.phase);
+    var dd=new Date(ai.midUTC+12*3600000);
+    var idx=fishingIndex(epheOffset+i,ai);
+    mc+='<div class="fc" style="width:64px;cursor:pointer" onclick="gotoEphe('+(epheOffset+i)+')">'+
+      '<div class="d">'+dd.toLocaleDateString("fr-FR",{weekday:"short",timeZone:TZ})+'</div>'+
+      '<div class="em" style="font-size:22px">'+m.e+'</div>'+
+      '<div class="t" style="font-size:11px">'+Math.round(ai.illum*100)+'%</div>'+
+      '<div class="idx"><i style="width:'+idx+'%;background:'+idxColor(idx)+'"></i></div></div>';
+  }
+  $("moonCal").innerHTML=mc;
+}
+function gotoEphe(off){ epheOffset=off; renderEphe(); show("ephe"); }
+
+function renderMeteo(){
+  if(DATA.wx&&DATA.wx.current){ var c=DATA.wx.current, w=wmo(c.weather_code);
+    $("mNowEm").textContent=w[1];
+    $("mNowTemp").textContent=Math.round(c.temperature_2m)+"°";
+    $("mNowDesc").textContent=w[0];
+    $("mFeel").textContent=Math.round(c.apparent_temperature)+"°";
+    $("mHum").innerHTML=Math.round(c.relative_humidity_2m)+'<small>%</small>';
+  }
+  // forecast 6 days (today..+5)
+  if(DATA.wx&&DATA.wx.daily){ var dy=DATA.wx.daily, todayI=dy.time.indexOf(ymdLocal(0)); if(todayI<0) todayI=0;
+    var html="";
+    for(var i=todayI;i<Math.min(todayI+6,dy.time.length);i++){
+      var w=wmo(dy.weather_code[i]);
+      var dd=new Date(dy.time[i]+"T12:00:00");
+      var off=i-todayI;
+      var ai=dayAstro(off);
+      var idx=fishingIndex(off,ai);
+      var lbl= off===0?"Auj.": dd.toLocaleDateString("fr-FR",{weekday:"short",timeZone:TZ});
+      html+='<div class="fc"><div class="d">'+lbl+'</div><div class="em">'+w[1]+'</div>'+
+        '<div class="t">'+Math.round(dy.temperature_2m_max[i])+'°<small> / '+Math.round(dy.temperature_2m_min[i])+'°</small></div>'+
+        '<div class="w">💨 '+Math.round(dy.wind_speed_10m_max[i])+' nds</div>'+
+        '<div class="w">🌧 '+round(dy.precipitation_sum[i],1)+' mm</div>'+
+        '<div class="idx" title="Indice de pêche"><i style="width:'+idx+'%;background:'+idxColor(idx)+'"></i></div></div>';
+    }
+    $("mForecast").innerHTML=html;
+    var di=dy.time.indexOf(ymdLocal(0)); if(di<0) di=todayI;
+    $("wAvg").textContent=Math.round(dy.wind_speed_10m_max[di])+" nds";
+    $("wGust").textContent=Math.round(dy.wind_gusts_10m_max[di])+" nds";
+    $("wDir").textContent=dirFR(dy.wind_direction_10m_dominant[di])+" ("+Math.round(dy.wind_direction_10m_dominant[di])+"°)";
+    $("wLocal").textContent=ventLocal(dy.wind_direction_10m_dominant[di]);
+  }
+  // marine
+  if(DATA.mar&&DATA.mar.daily){ var md=DATA.mar.daily, mi=md.time.indexOf(ymdLocal(0)); if(mi<0) mi=0;
+    $("hH").textContent=round(md.swell_wave_height_max[mi],1)+" m";
+    $("hP").textContent=md.swell_wave_period_max[mi]!=null? round(md.swell_wave_period_max[mi],0)+" s":"—";
+    $("hD").textContent=dirFR(md.swell_wave_direction_dominant[mi]);
+  }
+  if(DATA.mar&&DATA.mar.current&&DATA.mar.current.sea_surface_temperature!=null){
+    $("hT").textContent=Math.round(DATA.mar.current.sea_surface_temperature)+" °C";
+  }
+  // rain bars (Fakarava)
+  if(DATA.fak&&DATA.fak.daily){ var fd=DATA.fak.daily, vals=fd.precipitation_sum, times=fd.time;
+    var max=Math.max(1,Math.max.apply(null,vals.map(function(x){return x||0;})));
+    var todayStr=ymdLocal(0), html="", sum=0, mx={v:-1,t:""};
+    for(var i=0;i<times.length;i++){
+      var v=vals[i]||0; var fut = times[i]>todayStr;
+      if(!fut) sum+=v; if(v>mx.v) mx={v:v,t:times[i]};
+      var hpx=Math.round((v/max)*72);
+      var dd=new Date(times[i]+"T12:00:00");
+      html+='<div class="b"><div class="bv">'+(v>=0.5?round(v,0):"")+'</div><i class="'+(fut?"fut":"")+'" style="height:'+hpx+'px"></i>'+
+        '<div class="bd">'+dd.toLocaleDateString("fr-FR",{day:"numeric",timeZone:TZ})+'</div></div>';
+    }
+    $("rainBars").innerHTML=html;
+    $("rSum").textContent=round(sum,1)+" mm";
+    var dm=new Date(mx.t+"T12:00:00");
+    $("rMax").textContent= mx.v>0? round(mx.v,1)+" mm · "+dm.toLocaleDateString("fr-FR",{day:"numeric",month:"short",timeZone:TZ}):"sec";
+  }
+}
+
+/* ---------- fish & techniques data ---------- */
+var FISH=[
+  {em:"🐟",nm:"Carangue grosse tête (GT)",lat:"Caranx ignobilis",loc:"ʻŪrua / Upoʻo rahi / Uruʻati",zone:"PASSE · RÉCIF EXT.",
+   shape:"jack",c1:"#C9D4DA",c2:"#7E96A3",
+   habitat:"Abords de passe, récif extérieur, platier au petit matin.",
+   tech:"Popping & stickbait, jigging. Récupération saccadée en surface.",
+   gear:"Spinning lourd PE8–10, tresse 80 lb, leader 100–130 lb, poppers/stickbaits 100–150 g, hameçons & anneaux renforcés.",
+   eat:"warn", reg:null, note:"Combat brutal. Les gros sujets cumulent la ciguatera — no-kill conseillé sur les trophées."},
+  {em:"🐠",nm:"Carangue bleue",lat:"Caranx melampygus",loc:"ʻŪrua / Paʻaihere ninamu",zone:"LAGON · PLATIER · PASSE",
+   shape:"jack",c1:"#5CB7DC",c2:"#1E6F9B",
+   habitat:"Lagon, platier, tombants et passes.",
+   tech:"Lancer (leurres métal & souples), jig léger, popper léger, mouche.",
+   gear:"Spinning PE3–5, leurres 20–60 g, métal jig.",
+   eat:"warn", reg:null, note:"Excellente combattante, très accessible du bord."},
+  {em:"🐟",nm:"Carangue noire",lat:"Caranx lugubris",loc:"—",zone:"TOMBANT PROFOND",
+   shape:"jack",c1:"#6B7780",c2:"#2C3640",
+   habitat:"Tombants et récif extérieur profond.",
+   tech:"Jigging profond, traîne lente près du tombant.",
+   gear:"Jig 100–200 g, PE4–6.",
+   eat:"warn", reg:null, note:"Ciguatera possible selon la zone."},
+  {em:"🐡",nm:"Kio kio (Banane / Bonefish)",lat:"Albula glossodonta",loc:"Kio kio / ʻŌʻio / ʻIoʻio",zone:"PLATIER SABLEUX",
+   shape:"bonefish",c1:"#E0E8EC",c2:"#9DB0BA",
+   habitat:"Platiers et hauts-fonds sableux (flats).",
+   tech:"Reine de la pêche à la mouche — sight fishing à marée montante/basse.",
+   gear:"Soie 8–9, backing abondant (départs fulgurants), mouches crevette/crabe lestées (Gotcha), bas de ligne fluoro 12–16 lb.",
+   eat:"ok", reg:null, note:"Peu de risque ciguatérique (détritivore). Plutôt sport / no-kill (chair pleine d'arêtes)."},
+  {em:"🐟",nm:"Bec de cane (Empereur)",lat:"Lethrinus olivaceus & spp.",loc:"noms locaux variés",zone:"LAGON · FONDS · PASSE",
+   shape:"emperor",c1:"#D8D6BE",c2:"#9E9468",
+   habitat:"Fonds sableux & coralliens du lagon, passes.",
+   tech:"Palangrotte / ligne à main à l'appât (poulpe, sardine), leurre souple sur le fond.",
+   gear:"Bas de ligne fluoro, hameçons 1/0–4/0, plombée adaptée au courant.",
+   eat:"warn", reg:"size", note:"Chair excellente. Ciguatera possible selon le secteur."},
+  {em:"🐠",nm:"Loche saumonée (mérou paon)",lat:"Cephalopholis argus",loc:"Roi",zone:"PATATES · LAGON · TOMBANT",
+   shape:"grouper",c1:"#A06A4C",c2:"#6B4530",marks:"dots",
+   habitat:"Patates de corail, lagon, tombants.",
+   tech:"Appât sur le fond, leurre souple au ras du corail (ferrage immédiat, elle rentre au trou).",
+   gear:"Canne puissante, frein serré, bas de ligne costaud.",
+   eat:"danger", reg:null, note:"Souvent ciguatérigène dans les Tuamotu — prudence forte, se renseigner localement."},
+  {em:"🐟",nm:"Mérou / Loche (gros)",lat:"Epinephelus spp.",loc:"Hāpuʻu / Tarao",zone:"PASSE · TOMBANT · FRAYÈRE",
+   shape:"grouper",c1:"#9C8466",c2:"#6A553B",marks:"mottle",
+   habitat:"Passes, tombants, sites de regroupement de frai.",
+   tech:"Jig, appât sur le fond.",
+   gear:"Matériel lourd, frein bloqué près des structures.",
+   eat:"danger", reg:"spawn", note:"Risque ciguatérique élevé sur les gros. Regroupements de frai parfois réglementés — ne pas piller."},
+  {em:"🐠",nm:"Taʻape (vivaneau à raies bleues)",lat:"Lutjanus kasmira",loc:"Taʻape",zone:"PATATES · TOMBANT · LAGON",
+   shape:"snapper",c1:"#F4D54E",c2:"#E0B23A",marks:"stripes",
+   habitat:"Patates de corail, tombants, lagon (très abondant).",
+   tech:"Appât léger, train de sabiki, petits leurres.",
+   gear:"Matériel léger PE0.6–1.5.",
+   eat:"ok", reg:null, note:"Espèce introduite/invasive — prélèvement encouragé. Petits sujets : faible risque ciguatérique."},
+  {em:"🐟",nm:"Vivaneau chien (bohar)",lat:"Lutjanus bohar",loc:"ʻŪtu",zone:"TOMBANT · PASSE · RÉCIF EXT.",
+   shape:"snapper",c1:"#C9533F",c2:"#8E2E20",
+   habitat:"Tombants, passes, récif extérieur.",
+   tech:"Appât, jig.",
+   gear:"PE4–6, bas de ligne solide.",
+   eat:"danger", reg:null, note:"Parmi les poissons les plus ciguatérigènes des Tuamotu, surtout les gros — souvent déconseillé."},
+  {em:"🐟",nm:"Job gris (vivaneau job)",lat:"Aprion virescens",loc:"ʻUʻu",zone:"PASSE · TOMBANT · RÉCIF EXT.",
+   shape:"snapper",c1:"#90A7AF",c2:"#54707A",
+   habitat:"Passes, eaux libres près des tombants, récif extérieur.",
+   tech:"Jig, traîne lente, appât.",
+   gear:"PE3–5, jig 60–150 g.",
+   eat:"ok", reg:null, note:"Excellente cible « table » — pélagique, réputé peu ciguatérigène."},
+  {em:"🐟",nm:"Mulet (ʻanae)",lat:"Mugilidae (Crenimugil spp.)",loc:"ʻAnae / Kanae",zone:"LAGON · PLATIER SABLEUX",
+   shape:"mullet",c1:"#CBD6DC",c2:"#8A9AA3",
+   habitat:"Hauts-fonds et platiers sableux du lagon, souvent en bancs.",
+   tech:"Épervier (filet) ; pêche fine à l'appât. Difficile au leurre (détritivore/brouteur).",
+   gear:"Petit hameçon, ligne fine — ou épervier traditionnel.",
+   eat:"ok", reg:null, note:"Détritivore — pas de risque ciguatérique notable. Chair appréciée, pêche traditionnelle."},
+  {em:"🐠",nm:"Manini (chirurgien bagnard)",lat:"Acanthurus triostegus",loc:"Manini",zone:"PLATIER · RÉCIF",
+   shape:"surgeon",c1:"#E7E2C9",c2:"#9A9470",marks:"vbars",
+   habitat:"Platier et dalle récifale, en bancs — brouteur d'algues.",
+   tech:"Pêche traditionnelle (filet, harpon réglementé) ; petits hameçons à l'appât.",
+   gear:"Matériel très léger ou filet.",
+   eat:"ok", reg:null, note:"Herbivore — sûr et très prisé. Scalpel tranchant à la base de la queue : manipuler avec soin."},
+  {em:"🐠",nm:"Ume (nason à corne)",lat:"Naso unicornis",loc:"Ume",zone:"RÉCIF · PLATIER · TOMBANT",
+   shape:"unicorn",c1:"#8FB0AE",c2:"#4E7370",
+   habitat:"Bordures de récif et tombants — brouteur d'algues.",
+   tech:"Surtout harpon réglementé ; parfois à l'appât végétal.",
+   gear:"—",
+   eat:"ok", reg:null, note:"Herbivore réputé, chair excellente. Scalpels à la base de la queue."},
+  {em:"🐟",nm:"Vete (capucin / rouget-barbet)",lat:"Mulloidichthys flavolineatus",loc:"Vete / ʻŌuma",zone:"LAGON · FONDS SABLEUX",
+   shape:"goatfish",c1:"#E6D7C2",c2:"#C9A47E",marks:"goldline",
+   habitat:"Fonds sableux du lagon — fouille le sable avec ses barbillons, en bancs.",
+   tech:"Appât léger sur le fond (ver, chair), palangrotte fine.",
+   gear:"Hameçons fins 6–1/0, plombée légère, bas de ligne fluoro.",
+   eat:"ok", reg:null, note:"Excellent à table, faible risque ciguatérique — cible facile et savoureuse du lagon."},
+  {em:"🐟",nm:"Vivaneau à bosse (taea)",lat:"Lutjanus gibbus",loc:"noms locaux variés",zone:"LAGON · PATATES · TOMBANT",
+   shape:"snapper",c1:"#D06A55",c2:"#9A3A2A",
+   habitat:"Lagon et tombants, souvent en bancs serrés autour des patates.",
+   tech:"Appât, petits jigs et leurres souples près des structures.",
+   gear:"PE1.5–3, bas de ligne fluoro.",
+   eat:"warn", reg:null, note:"Bon à table mais ciguatera variable selon le secteur — se renseigner localement."},
+  {em:"🐟",nm:"Bossu à gros yeux (mu)",lat:"Monotaxis grandoculis",loc:"noms locaux variés",zone:"LAGON · RÉCIF · SABLE",
+   shape:"emperor",c1:"#CFD3CE",c2:"#8A8E88",
+   habitat:"Sable et abords récifaux — gros yeux, actif au crépuscule et la nuit.",
+   tech:"Appât sur le fond (poulpe, crustacé), palangrotte.",
+   gear:"Bas de ligne fluoro, hameçons 1/0–3/0.",
+   eat:"warn", reg:null, note:"Bonne chair ; ciguatera possible selon la zone. Mord souvent en fin de journée."},
+  {em:"🐠",nm:"Loche céleste (tonu)",lat:"Plectropomus spp.",loc:"Tonu",zone:"PASSE · TOMBANT · PATATES",
+   shape:"grouper",c1:"#C25A4A",c2:"#8A3326",marks:"dots",
+   habitat:"Passes, tombants et grosses patates — prédateur embusqué.",
+   tech:"Leurre souple et jig près du corail, appât.",
+   gear:"Matériel puissant, frein serré (rentre au trou).",
+   eat:"danger", reg:null, note:"Très prisée mais ciguatera élevée sur les gros sujets — prudence forte."},
+  {em:"🐟",nm:"Murène (puhi)",lat:"Gymnothorax javanicus",loc:"Puhi",zone:"PASSE · TOMBANT · PATATES",
+   shape:"eel",c1:"#9C8F6E",c2:"#5E5238",marks:"spots",
+   habitat:"Trous du corail, patates, passes et tombants.",
+   tech:"Souvent prise accidentellement à l'appât de fond.",
+   gear:"Bas de ligne très résistant — manipulation dangereuse (dents).",
+   eat:"danger", reg:null, note:"La murène géante est parmi les poissons les plus ciguatérigènes — à NE PAS consommer. Morsure dangereuse : ne pas manipuler."},
+  {em:"🐟",nm:"Rouget (capucin tacheté)",lat:"Parupeneus spp.",loc:"noms locaux variés",zone:"LAGON · RÉCIF · SABLE",
+   shape:"goatfish",c1:"#D98A6E",c2:"#9E4E33",
+   habitat:"Fonds sableux et abords récifaux — fouille le sable avec ses barbillons.",
+   tech:"Appât sur le fond (ver, chair, poulpe), palangrotte fine.",
+   gear:"Hameçons fins, plombée légère, bas de ligne fluoro.",
+   eat:"ok", reg:null, note:"Proche du vete mais plus coloré (rougeâtre). Bonne chair, risque ciguatérique généralement faible."},
+  {em:"🐠",nm:"ʻĪʻihi (marignan / soldat)",lat:"Holocentridae (Sargocentron · Myripristis)",loc:"ʻĪʻihi · Ahuru",zone:"RÉCIF · TROUS · NUIT",
+   shape:"squirrel",c1:"#E0564B",c2:"#A82E2E",
+   habitat:"Cachés dans les anfractuosités le jour, actifs la nuit — rouges et épineux.",
+   tech:"Petits hameçons à l'appât, surtout de nuit.",
+   gear:"Matériel léger ; attention aux épines.",
+   eat:"ok", reg:null, note:"Petits poissons rouges nocturnes. ʻĪʻihi = marignans ; ahuru = soldats (Myripristis). Chair correcte, faible risque."},
+  {em:"🐠",nm:"Maito (chirurgien sombre)",lat:"Acanthurus spp.",loc:"Maito",zone:"PLATIER · RÉCIF",
+   shape:"surgeon",c1:"#5C6B63",c2:"#33403A",
+   habitat:"Platier et dalle récifale — brouteur d'algues, en petits groupes.",
+   tech:"Harpon réglementé, petits hameçons à l'appât.",
+   gear:"Matériel léger.",
+   eat:"ok", reg:null, note:"Herbivore prisé. Scalpel tranchant à la base de la queue. (Manini et ume sont d'autres chirurgiens.)"},
+  {em:"🐠",nm:"Ume tārei (nason masqué)",lat:"Naso lituratus",loc:"Ume tārei",zone:"RÉCIF · TOMBANT",
+   shape:"naso",c1:"#7C8C86",c2:"#4A5A54",
+   habitat:"Bordures de récif et tombants — brouteur, sans corne (≠ ume).",
+   tech:"Surtout harpon réglementé.",
+   gear:"—",
+   eat:"ok", reg:null, note:"Nason aux éperons orange à la base de la queue. Herbivore, bonne chair."},
+  {em:"🐟",nm:"Nanue (calicagère / chub)",lat:"Kyphosus spp.",loc:"Nanue",zone:"RÉCIF · RÉCIF EXT. · RESSAC",
+   shape:"snapper",c1:"#7E8A90",c2:"#4E5A60",
+   habitat:"Zones de ressac et bordures récifales — brouteur d'algues, en bancs.",
+   tech:"Appât végétal (algue, pain) ou petite chair ; combat vif sur léger.",
+   gear:"PE1–2, hameçons fins.",
+   eat:"ok", reg:null, note:"Herbivore — chair parfois marquée par l'algue mais sûre. Bon combattant."},
+  {em:"🐠",nm:"Marava (picot / poisson-lapin)",lat:"Siganus spp.",loc:"Marava",zone:"LAGON · PLATIER · RÉCIF",
+   shape:"surgeon",c1:"#AEBC92",c2:"#5E6E4A",
+   habitat:"Lagon et platier — brouteur d'algues, en bancs.",
+   tech:"Appât végétal, petits hameçons ; pêche traditionnelle au filet.",
+   gear:"Matériel léger.",
+   eat:"ok", reg:null, note:"Herbivore apprécié. ⚠ Épines venimeuses (dorsale et anale) : piqûre douloureuse — manipuler avec précaution."},
+  {em:"🐟",nm:"Toʻau (vivaneau flamme)",lat:"Lutjanus fulvus",loc:"Toʻau",zone:"LAGON · PATATES · TOMBANT",
+   shape:"snapper",c1:"#D9B24E",c2:"#7E5226",
+   habitat:"Lagon, patates de corail et tombants — souvent en petits groupes.",
+   tech:"Appât, petits leurres et jigs près des structures.",
+   gear:"PE1.5–3, bas de ligne fluoro.",
+   eat:"warn", reg:null, note:"Vivaneau à nageoires sombres. Ciguatera variable selon le secteur."},
+  {em:"🐟",nm:"Ature & operu (chinchards)",lat:"Selar crumenophthalmus · Decapterus spp.",loc:"Ature / Orare / Aramea · Operu",zone:"LAGON · PASSE · PLEINE EAU",
+   shape:"scad",c1:"#AEBCC4",c2:"#5E727C",
+   habitat:"Bancs en pleine eau et près des passes ; gros yeux (ature).",
+   tech:"Sabiki, petits leurres ; servent aussi d'appât vif pour les carangues.",
+   gear:"Sabiki, matériel léger.",
+   eat:"ok", reg:null, note:"Petits carangidés grégaires — excellents appâts vivants et bons frits. Orare / aramea = stades/variantes locales."},
+  {em:"🐟",nm:"ʻAva (chano / milkfish)",lat:"Chanos chanos",loc:"ʻAva · ʻŌmaʻa · Pati",zone:"LAGON · PLATIER",
+   shape:"bonefish",c1:"#DCE6EA",c2:"#9FB0BA",
+   habitat:"Lagon et platiers, en bancs — brouteur de plancton et d'algues.",
+   tech:"Appât très fin (pâte, algue) ; redoutable combattant. Difficile au leurre.",
+   gear:"Bas de ligne fin, petit hameçon, frein réglé : il fuse comme le kio kio.",
+   eat:"ok", reg:null, note:"Sans risque ciguatérique. Très puissant à la canne. ʻŌmaʻa / pati = stades juvéniles selon les îles."},
+  {em:"🐟",nm:"Moi (capitaine / threadfin)",lat:"Polydactylus sexfilis",loc:"Moi",zone:"PLATIER · RESSAC · SABLE",
+   shape:"threadfin",c1:"#CBD6DC",c2:"#8A9AA3",
+   habitat:"Bordures sableuses battues par le ressac — filaments sensoriels sous les pectorales.",
+   tech:"Appât (crevette, ver) dans la zone de vagues, lancer léger.",
+   gear:"Bas de ligne fluoro, hameçons fins.",
+   eat:"ok", reg:null, note:"Chair très réputée, sans risque ciguatérique. Aime l'eau agitée des platiers."},
+  {em:"🐟",nm:"Parahā peue (platax)",lat:"Platax orbicularis",loc:"Parahā peue",zone:"LAGON · PATATES · ÉPAVES",
+   shape:"batfish",c1:"#C9CFD2",c2:"#7E8A90",marks:"vbars",
+   habitat:"Autour des patates, épaves et structures — corps très haut et plat.",
+   tech:"Appât sur le fond, parfois au leurre lent près des structures.",
+   gear:"Matériel léger à moyen.",
+   eat:"ok", reg:null, note:"Poisson chauve-souris en forme de disque. Curieux, peu farouche autour des structures."},
+  {em:"🐟",nm:"Béryx (mata anaʻana)",lat:"Beryx splendens",loc:"Matāʻanaʻana",zone:"GRAND FOND · TOMBANT PROFOND",
+   shape:"beryx",c1:"#E0625A",c2:"#A22E2E",
+   habitat:"Grandes profondeurs (200–600 m) le long des tombants — gros yeux adaptés à l'obscurité.",
+   tech:"Ligne à main / palangre profonde, souvent au treuil.",
+   gear:"Ligne profonde, plombs lourds, train d'hameçons.",
+   eat:"ok", reg:null, note:"Poisson de grand fond : chair fine et SANS risque ciguatérique. Hors lagon — pour les sorties au tombant profond."},
+  {em:"🐟",nm:"Carangue à gros yeux (ʻomuri)",lat:"Caranx sexfasciatus",loc:"ʻOmuri",zone:"PASSE · LAGON · TOMBANT",
+   shape:"jack",c1:"#BFD0D8",c2:"#5E7682",
+   habitat:"En bancs serrés dans les passes et près des tombants — surtout au crépuscule et de nuit.",
+   tech:"Lancer (jig, leurre souple), jigging ; chasses au lever et au coucher du jour.",
+   gear:"Spinning PE3–5, jigs et stickbaits moyens.",
+   eat:"warn", reg:null, note:"Carangue grégaire à gros yeux. Bonne combattante ; ciguatera possible sur les gros sujets."},
+  {em:"🐟",nm:"Carangue rayée (pahuru)",lat:"Carangoides ferdau",loc:"Pahuru · Autea · Ruhi · Roeroe",zone:"LAGON · SABLE · PLATIER",
+   shape:"jack",c1:"#C2D2D6",c2:"#6E8A92",marks:"bars",
+   habitat:"Fonds sableux et abords du lagon, parfois en petits bancs ; barres pâles sur les flancs.",
+   tech:"Lancer leurre, appât sur le fond ; combat vif sur léger.",
+   gear:"Spinning PE2–4, leurres 15–40 g.",
+   eat:"warn", reg:null, note:"Carangue à barres pâles. Autea / ruhi / roeroe = stades selon les îles. Ciguatera possible sur les gros."},
+  {em:"🐠",nm:"Perche d'or (maene)",lat:"Gnathodentex aureolineatus",loc:"Maene",zone:"RÉCIF · LAGON · PATATES",
+   shape:"emperor",c1:"#D9D2B0",c2:"#9C8A52",marks:"goldline",
+   habitat:"En bancs au-dessus du récif et des patates, souvent au crépuscule ; lignes dorées et tache jaune près de la queue.",
+   tech:"Appât léger sur le fond, petits leurres ; mord bien en fin de journée.",
+   gear:"Hameçons fins, bas de ligne fluoro, matériel léger.",
+   eat:"ok", reg:null, note:"Petite dorade dorée grégaire — bonne chair, active surtout au crépuscule et la nuit."},
+  {em:"🐟",nm:"Barracuda",lat:"Sphyraena spp.",loc:"noms locaux variés",zone:"PASSE · LAGON · PLATIER",
+   shape:"barracuda",c1:"#C7CFD4",c2:"#79868D",marks:"bars",
+   habitat:"Passes, lagon, platier.",
+   tech:"Leurre rapide, traîne, lancer. Attention aux dents.",
+   gear:"Bas de ligne acier ou fluoro épais, leurres brillants.",
+   eat:"danger", reg:null, note:"Les gros barracudas concentrent la ciguatera — relâcher les gros sujets."},
+  {em:"🐟",nm:"Wahoo (Thazard)",lat:"Acanthocybium solandri",loc:"Paere",zone:"RÉCIF EXT. · PASSE · LARGE",
+   shape:"wahoo",c1:"#5E7E96",c2:"#2E4456",marks:"bars",
+   habitat:"Le long du tombant extérieur et au large des passes.",
+   tech:"Traîne rapide (rapala plongeant, jet, plume), lancer stickbait sur chasse.",
+   gear:"Bas de ligne acier (dents), traîne classe 30–50 lb, 6–8 nœuds.",
+   eat:"ok", reg:null, note:"Excellent à table, pélagique — pas de souci ciguatérique notable."},
+  {em:"🐟",nm:"Thon (bonite / thon jaune)",lat:"Katsuwonus pelamis · Thunnus albacares",loc:"ʻAuhopu · ʻAʻahi",zone:"PASSE · LARGE",
+   shape:"tuna",c1:"#3F6E9A",c2:"#1E3D5C",marks:"finlets",
+   habitat:"Près des passes, chasses de surface, large.",
+   tech:"Traîne, lancer sur les chasses (oiseaux), jig.",
+   gear:"Métal jig, leurres de surface, traîne plume/jet.",
+   eat:"ok", reg:null, note:"Pélagique — excellent et sûr. Repérez les oiseaux."},
+  {em:"🐬",nm:"Mahi mahi (Dorade coryphène)",lat:"Coryphaena hippurus",loc:"Māhimahi",zone:"LARGE · OBJETS FLOTTANTS",
+   shape:"mahi",c1:"#46C0A2",c2:"#2C7E9B",marks:"gold",
+   habitat:"Eaux du large, autour des objets flottants & DCP.",
+   tech:"Traîne, lancer leurre/appât près des flottants.",
+   gear:"Traîne légère, leurres colorés.",
+   eat:"ok", reg:null, note:"Pélagique rapide et coloré, excellent à table."},
+  {em:"🐠",nm:"Perroquet",lat:"Scarus / Chlorurus spp.",loc:"Pāhoro / Pāʻati / Uhu",zone:"LAGON · PLATIER",
+   shape:"parrot",c1:"#2FB3A0",c2:"#1E7E8E",marks:"pink",
+   habitat:"Lagon et platier — brouteur de corail.",
+   tech:"Surtout pêche traditionnelle (harpon réglementé, filet). Difficile au leurre.",
+   gear:"—",
+   eat:"warn", reg:null, note:"Herbivore — souvent sûr, mais les gros sujets parfois à risque. Important pour la santé du récif : prélèvement raisonné."},
+  {em:"🐡",nm:"Napoléon",lat:"Cheilinus undulatus",loc:"Mara",zone:"PASSE · TOMBANT",
+   shape:"wrasse",c1:"#3E9E8C",c2:"#246F73",
+   habitat:"Passes et tombants.",
+   tech:"—",
+   gear:"—",
+   eat:"protect", reg:"protected", note:"Espèce vulnérable et réglementée (CITES). Observation seulement — ne pas prélever."},
+  {em:"🦈",nm:"Requins de récif",lat:"Carcharhinus spp.",loc:"Mauri / Raʻiraʻi",zone:"PASSE · TOMBANT · LAGON",
+   shape:"shark",c1:"#9AA7AE",c2:"#5E6E76",
+   habitat:"Passes, tombants, lagon (très présents aux Tuamotu).",
+   tech:"—",
+   gear:"—",
+   eat:"protect", reg:"protected", note:"Protégés en Polynésie française (sanctuaire requins). Ne pas cibler ; relâcher immédiatement si pris accidentellement."}
+];
+
+/* ---------- original fish illustrations (SVG, libres de droits) ---------- */
+function fishSVG(f, idn){
+  var c1=f.c1||"#9FB2BC", c2=f.c2||"#5E727C", sh=f.shape||"jack", mk=f.marks||"";
+  var gid="fg_"+idn;
+  var s='<svg viewBox="0 0 122 70" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">';
+  s+='<defs><linearGradient id="'+gid+'" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="'+c1+'"/><stop offset="1" stop-color="'+c2+'"/></linearGradient></defs>';
+  var fill='url(#'+gid+')';
+  var eye='<circle cx="26" cy="31" r="2.3" fill="#0A2A39"/><circle cx="26.8" cy="30.3" r="0.7" fill="#fff"/>';
+  var b="";
+  if(sh==="jack"){
+    b ='<path d="M104,35 L120,23 L114,35 L120,47 Z" fill="'+c2+'"/>';
+    b+='<path d="M50,17 L70,8 L80,18 Z" fill="'+c2+'" opacity="0.8"/><path d="M52,53 L66,62 L76,52 Z" fill="'+c2+'" opacity="0.8"/>';
+    b+='<path d="M16,35 C18,22 34,15 58,16 C80,17 97,24 105,35 C97,46 80,53 58,54 C34,55 18,48 16,35 Z" fill="'+fill+'"/>';
+    b+='<path d="M40,42 L60,52 L46,42 Z" fill="'+c2+'" opacity="0.55"/>';
+  } else if(sh==="snapper"){
+    b ='<path d="M106,34 L121,25 L116,34 L121,43 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,18 L92,19 L88,13 L48,14 Z" fill="'+c2+'" opacity="0.65"/><path d="M52,50 L82,50 L78,56 L56,56 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M14,34 C20,24 36,18 60,18 C82,18 99,25 107,34 C99,44 82,50 60,50 C36,50 20,44 14,34 Z" fill="'+fill+'"/>';
+    b+='<path d="M14,34 C11,36 12,40 18,40" fill="none" stroke="'+c2+'" stroke-width="1.4"/>';
+  } else if(sh==="emperor"){
+    b ='<path d="M107,34 L121,26 L117,34 L121,42 Z" fill="'+c2+'"/>';
+    b+='<path d="M48,21 L94,22 L90,15 L52,16 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M11,34 C9,33 9,35 11,35 C20,28 40,21 64,21 C84,22 99,27 107,34 C99,42 84,47 64,48 C40,49 22,43 12,35 C10,35 10,33 11,34 Z" fill="'+fill+'"/>';
+    b+='<path d="M16,32 C12,33 12,37 16,37" fill="none" stroke="'+c2+'" stroke-width="1.3"/>';
+  } else if(sh==="grouper"){
+    b ='<path d="M104,34 C113,28 119,30 119,34 C119,38 113,40 104,34 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,17 L96,19 L92,12 L46,13 Z" fill="'+c2+'" opacity="0.6"/><path d="M54,51 L86,50 L82,57 L58,57 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M14,33 C16,22 34,16 60,17 C82,18 98,24 104,34 C98,44 82,49 60,49 C34,50 18,44 14,33 Z" fill="'+fill+'"/>';
+    b+='<path d="M14,33 C11,37 14,42 22,41" fill="none" stroke="'+c2+'" stroke-width="1.6"/>';
+  } else if(sh==="bonefish"){
+    b ='<path d="M108,34 L122,27 L117,34 L122,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M58,25 L72,18 L80,26 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M11,34 C24,28 44,24 66,25 C86,26 100,30 108,34 C100,38 86,42 66,43 C44,44 24,40 11,34 Z" fill="'+fill+'"/>';
+  } else if(sh==="barracuda"){
+    b ='<path d="M112,34 L122,28 L118,34 L122,40 Z" fill="'+c2+'"/>';
+    b+='<path d="M66,29 L82,23 L86,30 Z" fill="'+c2+'" opacity="0.55"/><path d="M64,39 L80,45 L84,38 Z" fill="'+c2+'" opacity="0.5"/>';
+    b+='<path d="M6,34 L1,32 L3,34 L1,36 Z" fill="'+c2+'"/>';
+    b+='<path d="M8,34 C30,29 70,28 100,31 C107,32 111,33 113,34 C111,35 107,36 100,37 C70,40 30,39 8,34 Z" fill="'+fill+'"/>';
+    b+='<path d="M8,34 L20,33 M8,34 L20,35" stroke="'+c2+'" stroke-width="0.8"/>';
+  } else if(sh==="wahoo"){
+    b ='<path d="M110,34 L121,26 L116,34 L121,42 Z" fill="'+c2+'"/>';
+    b+='<path d="M40,26 L66,22 L64,28 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M10,34 C28,26 64,24 96,30 C103,31 108,33 110,34 C108,35 103,37 96,38 C64,44 28,42 10,34 Z" fill="'+fill+'"/>';
+  } else if(sh==="tuna"){
+    b ='<path d="M104,34 L120,21 C116,29 116,39 120,47 L104,34 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,20 L66,14 L62,24 Z" fill="'+c2+'" opacity="0.7"/><path d="M50,48 L70,55 L66,46 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M16,34 C20,22 40,17 64,18 C84,19 98,26 104,34 C98,42 84,49 64,50 C40,51 20,46 16,34 Z" fill="'+fill+'"/>';
+  } else if(sh==="mahi"){
+    b ='<path d="M108,35 L122,25 L116,35 L122,45 Z" fill="'+c2+'"/>';
+    b+='<path d="M18,23 C40,11 80,15 108,33 L108,29 C80,11 40,9 20,21 Z" fill="'+c2+'" opacity="0.85"/>';
+    b+='<path d="M16,24 C24,16 40,16 58,22 C80,29 100,34 108,35 C98,40 78,44 58,45 C40,46 24,40 17,33 C15,30 15,27 16,24 Z" fill="'+fill+'"/>';
+  } else if(sh==="parrot"){
+    b ='<path d="M104,34 C114,28 120,30 119,34 C120,38 114,40 104,34 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,16 L96,18 L92,11 L46,12 Z" fill="'+c2+'" opacity="0.7"/>';
+    b+='<path d="M16,34 C18,22 36,16 60,17 C82,18 98,24 104,34 C98,44 82,50 60,51 C36,52 18,46 16,34 Z" fill="'+fill+'"/>';
+    b+='<path d="M16,31 C11,32 11,38 16,39 L23,38 L23,32 Z" fill="#EBE3CF"/><path d="M16,35 L23,35" stroke="'+c2+'" stroke-width="0.8"/>';
+  } else if(sh==="wrasse"){
+    b ='<path d="M106,36 C114,30 119,32 119,36 C119,40 114,42 106,36 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,19 L96,20 L92,14 L46,15 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M22,22 C30,11 46,12 52,21 C43,18 31,18 23,25 Z" fill="'+c2+'"/>';
+    b+='<path d="M16,36 C18,24 38,18 62,19 C84,20 100,26 106,36 C100,46 84,52 62,52 C38,53 18,47 16,36 Z" fill="'+fill+'"/>';
+    b+='<path d="M14,36 C11,38 12,41 17,41" fill="none" stroke="'+c2+'" stroke-width="1.6"/>';
+  } else if(sh==="shark"){
+    b ='<path d="M108,36 L121,21 L116,34 L122,41 L113,41 Z" fill="'+fill+'"/>';
+    b+='<path d="M48,31 L62,12 L72,31 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,40 L58,53 L64,41 Z" fill="'+c2+'" opacity="0.8"/>';
+    b+='<path d="M3,36 C20,30 56,28 86,31 C97,32 105,34 109,36 C105,38 97,40 86,41 C58,44 22,43 3,36 Z" fill="'+fill+'"/>';
+    b+='<path d="M3,36 L16,35" stroke="'+c2+'" stroke-width="0.9"/>';
+    eye='<circle cx="22" cy="34" r="1.8" fill="#0A2A39"/>';
+  } else if(sh==="mullet"){
+    b ='<path d="M107,34 L121,27 L116,34 L121,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M48,24 L56,18 L60,25 Z" fill="'+c2+'" opacity="0.7"/><path d="M70,25 L78,21 L80,27 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M13,34 C22,28 42,24 66,25 C86,26 100,30 107,34 C100,38 86,43 66,44 C42,45 22,40 13,34 Z" fill="'+fill+'"/>';
+  } else if(sh==="surgeon"){
+    b ='<path d="M101,34 L114,29 L110,34 L114,39 Z" fill="'+c2+'"/>';
+    b+='<path d="M40,17 L92,18 L88,12 L44,13 Z" fill="'+c2+'" opacity="0.6"/><path d="M48,51 L86,50 L82,57 L52,57 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M18,34 C20,20 38,14 60,15 C80,16 96,22 102,34 C96,46 80,52 60,53 C38,54 20,48 18,34 Z" fill="'+fill+'"/>';
+    b+='<circle cx="95" cy="34" r="1.9" fill="#E0762F"/>';
+  } else if(sh==="unicorn"){
+    b ='<path d="M104,34 L118,27 L114,34 L118,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M16,28 L7,23 L17,31 Z" fill="'+c2+'"/>';
+    b+='<path d="M40,18 L98,19 L94,13 L44,14 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M16,34 C18,22 36,16 60,17 C82,18 98,24 104,34 C98,44 82,50 60,51 C36,52 18,46 16,34 Z" fill="'+fill+'"/>';
+  } else if(sh==="goatfish"){
+    b ='<path d="M106,33 L120,26 L115,33 L120,40 Z" fill="'+c2+'"/>';
+    b+='<path d="M44,24 L52,18 L56,25 Z" fill="'+c2+'" opacity="0.6"/><path d="M66,24 L74,20 L76,26 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M13,33 C22,26 42,22 66,23 C86,24 100,29 107,33 C100,38 86,43 66,44 C42,45 22,40 13,33 Z" fill="'+fill+'"/>';
+    b+='<path d="M16,39 C14,46 18,48 20,43 M20,40 C19,47 23,49 24,44" stroke="'+c2+'" stroke-width="1.3" fill="none"/>';
+  } else if(sh==="eel"){
+    b ='<path d="M12,33 C26,21 46,45 68,32 C86,21 104,41 116,33" fill="none" stroke="'+fill+'" stroke-width="13" stroke-linecap="round"/>';
+    b+='<path d="M12,28 C5,29 5,38 12,39 Z" fill="'+fill+'"/>';
+    b+='<path d="M9,34 C5,35 6,37 12,37" fill="none" stroke="#0A2A39" stroke-width="1.1"/>';
+    eye='<circle cx="15" cy="30" r="1.9" fill="#0A2A39"/><circle cx="15.6" cy="29.4" r="0.6" fill="#fff"/>';
+  } else if(sh==="beryx"){
+    b ='<path d="M104,34 L119,25 L114,34 L119,43 Z" fill="'+c2+'"/>';
+    b+='<path d="M42,18 L92,19 L88,12 L46,13 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M18,34 C20,20 38,14 62,15 C82,16 98,22 104,34 C98,46 82,52 62,53 C38,54 20,48 18,34 Z" fill="'+fill+'"/>';
+    eye='<circle cx="30" cy="30" r="3.4" fill="#0A2A39"/><circle cx="31.2" cy="29" r="1" fill="#fff"/>';
+  } else if(sh==="squirrel"){
+    b ='<path d="M103,34 L117,27 L113,34 L117,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M40,20 L46,15 L50,20 L56,14 L60,20 L66,15 L70,20 L80,18 L90,20 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M18,34 C20,22 38,16 60,17 C80,18 96,23 103,34 C96,45 80,50 60,51 C38,52 20,46 18,34 Z" fill="'+fill+'"/>';
+    eye='<circle cx="28" cy="31" r="3" fill="#0A2A39"/><circle cx="29" cy="30" r="0.9" fill="#fff"/>';
+  } else if(sh==="naso"){
+    b ='<path d="M104,34 L118,27 L114,34 L118,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M40,18 L98,19 L94,13 L44,14 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M16,34 C18,22 36,16 60,17 C82,18 98,24 104,34 C98,44 82,50 60,51 C36,52 18,46 16,34 Z" fill="'+fill+'"/>';
+    b+='<circle cx="92" cy="31" r="2" fill="#E8852E"/><circle cx="92" cy="37" r="2" fill="#E8852E"/>';
+  } else if(sh==="scad"){
+    b ='<path d="M105,34 L120,27 L115,34 L120,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M48,25 L60,20 L62,26 Z" fill="'+c2+'" opacity="0.6"/>';
+    b+='<path d="M14,34 C24,28 44,24 66,25 C86,26 100,30 106,34 C100,38 86,42 66,43 C44,44 24,40 14,34 Z" fill="'+fill+'"/>';
+    b+='<path d="M70,35 L104,35" stroke="'+c2+'" stroke-width="1" opacity="0.5"/>';
+    eye='<circle cx="26" cy="31" r="2.7" fill="#0A2A39"/><circle cx="26.9" cy="30.2" r="0.8" fill="#fff"/>';
+  } else if(sh==="threadfin"){
+    b ='<path d="M107,34 L121,27 L116,34 L121,41 Z" fill="'+c2+'"/>';
+    b+='<path d="M46,24 L54,18 L58,25 Z" fill="'+c2+'" opacity="0.6"/><path d="M68,25 L76,21 L78,27 Z" fill="'+c2+'" opacity="0.55"/>';
+    b+='<path d="M13,34 C22,27 42,23 66,24 C86,25 100,30 107,34 C100,38 86,43 66,44 C42,45 22,41 13,34 Z" fill="'+fill+'"/>';
+    b+='<path d="M20,40 C26,50 40,52 52,50 M20,42 C28,52 44,55 58,52 M20,44 C30,55 48,58 64,54" stroke="'+c2+'" stroke-width="1" fill="none" opacity="0.7"/>';
+  } else if(sh==="batfish"){
+    b ='<path d="M100,34 C108,30 113,31 113,34 C113,37 108,38 100,34 Z" fill="'+c2+'"/>';
+    b+='<path d="M40,18 C50,2 80,2 92,22 L92,30 C78,16 52,16 42,28 Z" fill="'+c2+'" opacity="0.7"/>';
+    b+='<path d="M40,50 C50,66 80,66 92,46 L92,38 C78,52 52,52 42,40 Z" fill="'+c2+'" opacity="0.65"/>';
+    b+='<path d="M16,34 C16,24 30,16 50,16 C72,16 92,24 96,34 C92,44 72,52 50,52 C30,52 16,44 16,34 Z" fill="'+fill+'"/>';
+    eye='<circle cx="28" cy="30" r="2.4" fill="#0A2A39"/><circle cx="28.9" cy="29.2" r="0.7" fill="#fff"/>';
+  }
+  // markings
+  if(mk==="stripes"){ for(var i=0;i<4;i++){ var yy=24+i*6; b+='<path d="M24,'+yy+' C50,'+(yy-1)+' 80,'+(yy-1)+' 100,'+yy+'" stroke="#2E6FA8" stroke-width="1.6" fill="none" opacity="0.8"/>'; } }
+  if(mk==="bars"){ for(var i=0;i<6;i++){ var xx=30+i*12; b+='<line x1="'+xx+'" y1="24" x2="'+(xx-3)+'" y2="46" stroke="'+c2+'" stroke-width="2.4" opacity="0.55"/>'; } }
+  if(mk==="finlets"){ for(var i=0;i<5;i++){ var xx=72+i*6; b+='<path d="M'+xx+',23 l3,-2 l-1,3 Z" fill="#F4C430"/><path d="M'+xx+',45 l3,2 l-1,-3 Z" fill="#F4C430"/>'; } b+='<path d="M44,20 L66,14 L62,24 Z" fill="#F4C430" opacity="0.55"/>'; }
+  if(mk==="gold"){ b+='<path d="M30,38 C55,42 85,42 105,38 C85,46 55,46 30,42 Z" fill="#F4C430" opacity="0.55"/>'; for(var i=0;i<7;i++){ b+='<circle cx="'+(34+i*9)+'" cy="'+(30+(i%2)*5)+'" r="1.4" fill="#1B5E8A"/>'; } }
+  if(mk==="pink"){ b+='<path d="M16,34 C40,30 80,30 104,34 C80,38 40,38 16,34 Z" fill="#FF8FB0" opacity="0.45"/>'; b+='<path d="M60,22 C70,20 82,23 90,30" stroke="#F4C430" stroke-width="1.4" fill="none" opacity="0.7"/>'; }
+  if(mk==="dots"){ for(var i=0;i<22;i++){ var dx=22+(i%8)*10+(Math.floor(i/8)%2)*5, dy=24+Math.floor(i/8)*8; b+='<circle cx="'+dx+'" cy="'+dy+'" r="1.5" fill="#3FA9E0" opacity="0.7"/>'; } }
+  if(mk==="mottle"){ for(var i=0;i<14;i++){ var dx=24+(i*7)%80, dy=24+((i*13)%24); b+='<circle cx="'+dx+'" cy="'+dy+'" r="2.2" fill="'+c2+'" opacity="0.5"/>'; } }
+  if(mk==="vbars"){ for(var i=0;i<5;i++){ var xx=34+i*12; b+='<line x1="'+xx+'" y1="20" x2="'+xx+'" y2="48" stroke="#33321F" stroke-width="2" opacity="0.55"/>'; } }
+  if(mk==="goldline"){ b+='<path d="M18,33 C44,30 84,30 104,33" stroke="#E8B84B" stroke-width="2" fill="none" opacity="0.85"/>'; }
+  if(mk==="spots"){ var sp=[[24,28],[34,38],[46,30],[58,40],[68,30],[80,38],[92,32],[100,35],[30,33],[52,33],[74,35]]; for(var i=0;i<sp.length;i++){ b+='<circle cx="'+sp[i][0]+'" cy="'+sp[i][1]+'" r="2" fill="#3C3320" opacity="0.6"/>'; } }
+  s+=b+eye+'</svg>';
+  return s;
+}
+
+function eatBadge(k){
+  if(k==="ok") return '<span class="badge b-ok">Table · risque faible</span>';
+  if(k==="warn") return '<span class="badge b-warn">⚠ Ciguatera selon zone</span>';
+  if(k==="danger") return '<span class="badge b-danger">⚠ Ciguatera élevé</span>';
+  if(k==="protect") return '<span class="badge b-protect">Ne pas consommer / protégé</span>';
+  return "";
+}
+function regBadge(k){
+  if(k==="protected") return '<span class="badge b-protect">Espèce protégée</span>';
+  if(k==="size") return '<span class="badge b-warn">Taille minimale</span>';
+  if(k==="spawn") return '<span class="badge b-warn">Frai réglementé</span>';
+  return "";
+}
+function renderFish(){
+  var html="";
+  for(var i=0;i<FISH.length;i++){ var f=FISH[i];
+    html+='<div class="fish" id="fish'+i+'"><div class="head" onclick="toggleFish('+i+')">'+
+      '<div class="av">'+fishSVG(f,"a"+i)+'</div>'+
+      '<div class="nm"><b>'+f.nm+'</b><i>'+f.lat+'</i><div class="loc">'+f.loc+' · '+f.zone+'</div></div>'+
+      '<div class="chev">›</div></div>'+
+      '<div class="body">'+
+        '<div class="fishfig" id="fig'+i+'">'+fishSVG(f,"f"+i)+'</div>'+
+        '<div class="figcap"><small id="figcap'+i+'">Illustration indicative · réf. : <i>'+f.lat+'</i></small>'+
+          '<span><button class="figbtn" onclick="pickPhoto('+i+')">＋ Photo</button> '+
+          '<button class="figbtn" id="figrm'+i+'" onclick="removePhoto('+i+')" style="display:none">Retirer</button></span></div>'+
+        '<input type="file" accept="image/*" id="figin'+i+'" style="display:none" onchange="onPhoto(event,'+i+')">'+
+        '<div class="kv"><div class="kk">Où</div><div class="vv">'+f.habitat+'</div></div>'+
+        '<div class="kv"><div class="kk">Technique</div><div class="vv">'+f.tech+'</div></div>'+
+        (f.gear!=="—"?'<div class="kv"><div class="kk">Matériel</div><div class="vv">'+f.gear+'</div></div>':'')+
+        '<div class="kv"><div class="kk">À savoir</div><div class="vv">'+f.note+'</div></div>'+
+        '<div class="badges">'+eatBadge(f.eat)+regBadge(f.reg)+'</div>'+
+      '</div></div>';
+  }
+  $("fishList").innerHTML=html;
+  loadPhotos();
+}
+function toggleFish(i){ $("fish"+i).classList.toggle("open"); }
+
+/* ---- per-species photos (locales, hors-ligne, choisies par l'utilisateur) ---- */
+function pickPhoto(i){ var el=$("figin"+i); if(el) el.click(); }
+function onPhoto(e,i){
+  var f=e.target.files&&e.target.files[0]; if(!f){ return; }
+  var rd=new FileReader();
+  rd.onload=function(){
+    var img=new Image();
+    img.onload=function(){
+      var max=720, sc=Math.min(1,max/img.width), w=Math.round(img.width*sc), h=Math.round(img.height*sc);
+      var cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+      cv.getContext("2d").drawImage(img,0,0,w,h);
+      var url; try{ url=cv.toDataURL("image/jpeg",0.72); }catch(err){ url=rd.result; }
+      try{ store&&store.setItem("aratika_photo_"+i,url); applyPhoto(i,url); }
+      catch(err){ applyPhoto(i,url); figMsg(i,"Affichée pour la session — stockage plein, non sauvegardée."); }
+    };
+    img.onerror=function(){ figMsg(i,"Image illisible — réessayez avec une autre."); };
+    img.src=rd.result;
+  };
+  rd.readAsDataURL(f);
+  e.target.value="";
+}
+function applyPhoto(i,url){
+  var fig=$("fig"+i); if(!fig) return;
+  var im=fig.querySelector("img.userphoto");
+  if(!im){ im=document.createElement("img"); im.className="userphoto"; fig.appendChild(im); }
+  im.src=url;
+  var rm=$("figrm"+i); if(rm) rm.style.display="inline-block";
+  var cap=$("figcap"+i); if(cap) cap.textContent="Photo perso";
+}
+function removePhoto(i){
+  try{ store&&store.removeItem("aratika_photo_"+i); }catch(e){}
+  var fig=$("fig"+i); var im=fig&&fig.querySelector("img.userphoto"); if(im) im.remove();
+  var rm=$("figrm"+i); if(rm) rm.style.display="none";
+  var cap=$("figcap"+i); if(cap) cap.innerHTML='Illustration indicative · réf. : <i>'+FISH[i].lat+'</i>';
+}
+function figMsg(i,msg){ var cap=$("figcap"+i); if(cap) cap.textContent=msg; }
+function loadPhotos(){
+  for(var i=0;i<FISH.length;i++){ var u=null; try{ u=store&&store.getItem("aratika_photo_"+i); }catch(e){} if(u) applyPhoto(i,u); }
+}
+
+var TECH=[
+  {ti:"🎯",nm:"Popping & stickbait",txt:"<b>Cible :</b> carangues (GT, bleue), parfois job & thon en surface.<br><b>Où/quand :</b> abords de passe et récif extérieur, au lever du jour, sur courant entrant ou sortant marqué.<br><b>Matériel :</b> spinning 7'6\"–8' PE8, moulinet 14000–18000, tresse 80 lb, leader 100–130 lb, poppers/stickbaits 100–150 g, triples renforcés ou assist + anneaux soudés."},
+  {ti:"⬇️",nm:"Jigging",txt:"<b>Cible :</b> job gris, carangues, loches, thons.<br><b>Où/quand :</b> tombants de passe, 20–60 m, sur le courant.<br><b>Matériel :</b> slow-pitch PE2–4 avec jigs 80–150 g, ou speed jig. Casser le fond puis remontée animée."},
+  {ti:"🪰",nm:"Pêche à la mouche (flat)",txt:"<b>Cible :</b> kio kio (bonefish), carangue bleue.<br><b>Où/quand :</b> platiers sableux à marée basse/montante, en marche-à-vue.<br><b>Matériel :</b> soie 8–9 (kio kio) / 10–12 (carangue), backing abondant, mouches crevette/crabe lestées (Gotcha), bas de ligne fluoro 12–16 lb."},
+  {ti:"🚤",nm:"Traîne (trolling)",txt:"<b>Cible :</b> wahoo (paere), thon, mahi mahi.<br><b>Où/quand :</b> le long du tombant extérieur et au large des passes, 6–8 nœuds.<br><b>Matériel :</b> rapalas plongeants, jets/plumes, bas de ligne acier pour le wahoo (dents), ensemble 30–50 lb."},
+  {ti:"🪝",nm:"Palangrotte / ligne à main",txt:"<b>Cible :</b> bec de cane, taʻape, vivaneaux.<br><b>Où/quand :</b> patates de corail et tombants, à l'ancre ou en dérive.<br><b>Matériel :</b> appât poulpe/sardine, hameçons 1/0–4/0, plombée selon le courant, bas de ligne fluoro."},
+  {ti:"🎣",nm:"Lancer léger (du bord)",txt:"<b>Cible :</b> carangue bleue, barracuda, poissons de platier.<br><b>Où/quand :</b> depuis le platier, le motu ou la passe, tôt et tard.<br><b>Matériel :</b> spinning PE1–3, leurres métal 10–40 g, stickbaits légers, leurres souples montés sur tête plombée."},
+  {ti:"🪨",nm:"Pêche traditionnelle paumotu",txt:"<b>Savoir local :</b> parcs à poissons (pièges en pierre/grillage dans le lagon), pêche de nuit, harpon réglementé. Demandez et respectez les pratiques et les <b>rāhui</b> d'Aratika — c'est aussi la meilleure source de conseils sur les zones et les courants."}
+];
+function renderTech(){
+  var html="";
+  for(var i=0;i<TECH.length;i++){ var t=TECH[i];
+    html+='<div class="tech" id="tech'+i+'"><div class="th" onclick="toggleTech('+i+')">'+
+      '<div class="ti">'+t.ti+'</div><b>'+t.nm+'</b><div class="chev">›</div></div>'+
+      '<div class="tb"><p style="font-size:13px;margin:8px 0 0">'+t.txt+'</p></div></div>';
+  }
+  $("techList").innerHTML=html;
+}
+function toggleTech(i){ $("tech"+i).classList.toggle("open"); }
+
+/* ---------- glossaire ---------- */
+var GLOSSARY=[
+  {g:"Le milieu", items:[
+    ["Platier","Étendue peu profonde et plate du récif, parfois découverte à marée basse — terrain du kio kio à la mouche."],
+    ["Tombant","Pente abrupte du récif plongeant vers le profond — zone clé pour jigs et vivaneaux."],
+    ["Passe","Chenal reliant le lagon à l'océan — couloir à poissons selon le sens du courant."],
+    ["Hoa","Chenal peu profond de la couronne récifale par lequel l'eau franchit le récif (terme paumotu)."],
+    ["Motu","Îlot de sable et de corail posé sur la couronne du récif."],
+    ["Patate (de corail)","Massif corallien isolé dans le lagon — abri et garde-manger à poissons."],
+    ["Récif extérieur","Face océanique du récif, exposée à la houle — spot à carangues au popper."]
+  ]},
+  {g:"Courant & marée", items:[
+    ["Flot (montante)","Courant entrant : l'océan remplit le lagon par la passe."],
+    ["Jusant (descendante)","Courant sortant : le lagon se vide vers l'océan — concentre les proies à la passe."],
+    ["Étale","Renverse : courant nul entre deux phases — souvent un bon moment."],
+    ["Marnage","Écart de hauteur entre basse et haute mer (très faible aux Tuamotu)."]
+  ]},
+  {g:"Techniques", items:[
+    ["Popping","Leurres de surface (poppers) qui claquent l'eau pour exciter les carangues."],
+    ["Stickbait","Leurre de surface fuselé, nage en glisse/zigzag (« walking »)."],
+    ["Jig / jigging","Leurre métallique plombé travaillé à la verticale ; slow-pitch = animation lente et planée."],
+    ["Casting (lancer)","Lancer-ramener d'un leurre depuis le bord ou le bateau."],
+    ["Traîne (trolling)","Leurres tractés derrière le bateau en mouvement."],
+    ["Palangrotte","Ligne à main lestée pêchée à la verticale sur le fond."],
+    ["Pêche au vif","Petit poisson vivant utilisé comme appât."],
+    ["Sight fishing","Pêche à vue : on repère le poisson avant de lancer (mouche sur platier)."],
+    ["No-kill","Remise à l'eau du poisson après capture (catch & release)."]
+  ]},
+  {g:"Matériel", items:[
+    ["PE / tresse","Numérotation japonaise du diamètre de tresse : PE1 fin → PE8+ très costaud."],
+    ["Leader / bas de ligne","Section résistante entre la tresse et le leurre (fluoro, nylon ou acier)."],
+    ["Fluorocarbone","Bas de ligne quasi invisible sous l'eau, résistant à l'abrasion."],
+    ["Bas de ligne acier","Indispensable face aux poissons à dents (barracuda, murène)."],
+    ["Assist hook","Hameçon simple monté sur cordage, courant sur jigs et stickbaits."],
+    ["Anneau soudé / split ring","Connexions renforcées entre leurre, hameçons et ligne."],
+    ["Frein (drag)","Résistance réglable du moulinet qui cède de la ligne sous l'effort."],
+    ["Backing","Réserve de ligne sous la soie/tresse pour les longues fuites (kio kio !)."],
+    ["Soie","Ligne de la pêche à la mouche ; le numéro (8–9…) indique la puissance."],
+    ["Sabiki","Train de petits hameçons à plumes pour fabriquer des appâts vivants."]
+  ]},
+  {g:"Local & sécurité", items:[
+    ["Ciguatera (« la gratte »)","Intoxication par la ciguatoxine accumulée dans certains poissons de récif."],
+    ["Rāhui","Interdiction temporaire de prélèvement décidée localement (gestion traditionnelle)."],
+    ["Maraʻamu","Vent fort de secteur sud / sud-est."],
+    ["Toʻerau","Vent de secteur nord / nord-ouest."],
+    ["Ature","Petit carangidé (chinchard) servant souvent d'appât vivant."]
+  ]}
+];
+function renderGlossary(){
+  var html="";
+  for(var s=0;s<GLOSSARY.length;s++){ var sec=GLOSSARY[s];
+    html+='<div class="eyebrow" style="margin:'+(s?"16px":"8px")+' 0 5px;color:var(--lagon)">'+sec.g+'</div>';
+    for(var i=0;i<sec.items.length;i++){ var it=sec.items[i];
+      html+='<div class="ge"><span class="gt">'+it[0]+'</span> — <span class="gd">'+it[1]+'</span></div>';
+    }
+  }
+  $("glossary").innerHTML=html;
+}
+
+/* ---------- router ---------- */
+function show(name){
+  var pages=document.querySelectorAll(".page");
+  for(var i=0;i<pages.length;i++) pages[i].classList.remove("on");
+  $("p-"+name).classList.add("on");
+  window.scrollTo({top:0,behavior:"instant"in document.documentElement.style?"instant":"auto"});
+}
+document.querySelectorAll("[data-go]").forEach(function(b){ b.addEventListener("click",function(){ show(b.getAttribute("data-go")); }); });
+document.querySelectorAll("[data-back]").forEach(function(b){ b.addEventListener("click",function(){ show("home"); }); });
+$("ephPrev").addEventListener("click",function(){ epheOffset--; renderEphe(); });
+$("ephNext").addEventListener("click",function(){ epheOffset++; renderEphe(); });
+
+/* settings */
+$("gearBtn").addEventListener("click",function(){ $("inLat").value=CFG.lat; $("inLon").value=CFG.lon; $("sheet").classList.add("on"); });
+$("sheetCancel").addEventListener("click",function(){ $("sheet").classList.remove("on"); });
+$("sheet").addEventListener("click",function(e){ if(e.target===$("sheet")) $("sheet").classList.remove("on"); });
+$("sheetSave").addEventListener("click",function(){
+  var la=parseFloat(($("inLat").value||"").replace(",",".")), lo=parseFloat(($("inLon").value||"").replace(",","."));
+  if(!isNaN(la)&&!isNaN(lo)){ saveCfg({lat:la,lon:lo}); }
+  $("sheet").classList.remove("on");
+  loadAll();
+});
+
+/* footer + boot */
+$("globalFoot").innerHTML="Indice de pêche : heuristique indicative (lune, solunaire, vent, houle, pluie) — pas une garantie.<br>App personnelle · à recouper avec l'observation du terrain et les conseils des habitants.";
+// tri alphabétique du catalogue (déterministe → ordre stable, ignore accents & ʻokina)
+function fishSortKey(s){ return (s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[ʻ'`’]/g,"").toLowerCase(); }
+FISH.sort(function(a,b){ return fishSortKey(a.nm).localeCompare(fishSortKey(b.nm),"fr"); });
+renderFish(); renderTech(); renderGlossary();
+renderAll();
+loadAll();
+// refresh light data each time the app regains focus
+document.addEventListener("visibilitychange",function(){ if(!document.hidden) renderAll(); });
+</script>
+<script>
+/* PWA : enregistre le service worker uniquement en contexte sécurisé (HTTPS), pas en file:// */
+if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
+  window.addEventListener("load", function(){
+    navigator.serviceWorker.register("sw.js").catch(function(){ /* hors-ligne / file:// : on ignore */ });
+  });
+}
+</script>
+</body>
+</html>
