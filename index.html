@@ -461,7 +461,7 @@ else window.SunCalc = SunCalc;
   .fish .av svg{width:100%;height:100%}
   .fishfig{position:relative;border-radius:14px;overflow:hidden;background:linear-gradient(160deg,#EAF6F4,#CDE9E6);margin:12px 0 6px;aspect-ratio:16/7;display:flex;align-items:center;justify-content:center;border:1px solid var(--sable-bord)}
   .fishfig svg{width:60%;height:78%}
-  .fishfig img.userphoto{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .fishfig img.userphoto,.fishfig img.autophoto{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
   .figcap{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:0 0 8px}
   .figcap small{font-size:10.5px;color:var(--encre-doux)}
   .figbtn{font-family:"Space Mono",monospace;font-size:10px;font-weight:700;border:1px solid var(--sable-bord);background:#fff;border-radius:20px;padding:5px 9px;cursor:pointer;color:var(--encre)}
@@ -778,6 +778,11 @@ else window.SunCalc = SunCalc;
     <div class="field"><label>Latitude (Aratika)</label><input id="inLat" type="text" inputmode="decimal"></div>
     <div class="field"><label>Longitude (Aratika)</label><input id="inLon" type="text" inputmode="decimal"></div>
     <p class="muted" style="font-size:11.5px;margin:0">Affinez sur votre passe ou votre pension. Valeurs par défaut : −15.51, −145.48.</p>
+    <div class="field" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px">
+      <label style="margin:0">Photos en ligne (iNaturalist)</label>
+      <input id="inAuto" type="checkbox" style="width:auto;height:22px;transform:scale(1.3)">
+    </div>
+    <p class="muted" style="font-size:11px;margin:0">Charge une photo de l'espèce par son nom latin quand une fiche est ouverte (nécessite le réseau). Sinon, illustration.</p>
     <div class="btnrow">
       <button class="btn btn-2" id="sheetCancel">Annuler</button>
       <button class="btn btn-1" id="sheetSave">Enregistrer & actualiser</button>
@@ -1317,7 +1322,7 @@ var FISH=[
    tech:"Appât sur le fond (poulpe, crustacé), palangrotte.",
    gear:"Bas de ligne fluoro, hameçons 1/0–3/0.",
    eat:"warn", reg:null, note:"Bonne chair ; ciguatera possible selon la zone. Mord souvent en fin de journée."},
-  {em:"🐠",nm:"Loche céleste (tonu)",lat:"Plectropomus spp.",loc:"Tonu",zone:"PASSE · TOMBANT · PATATES",
+  {em:"🐠",nm:"Loche céleste (tonu)",lat:"Plectropomus leopardus",loc:"Tonu",zone:"PASSE · TOMBANT · PATATES",
    shape:"grouper",c1:"#C25A4A",c2:"#8A3326",marks:"dots",
    habitat:"Passes, tombants et grosses patates — prédateur embusqué.",
    tech:"Leurre souple et jig près du corail, appât.",
@@ -1329,24 +1334,24 @@ var FISH=[
    tech:"Souvent prise accidentellement à l'appât de fond.",
    gear:"Bas de ligne très résistant — manipulation dangereuse (dents).",
    eat:"danger", reg:null, note:"La murène géante est parmi les poissons les plus ciguatérigènes — à NE PAS consommer. Morsure dangereuse : ne pas manipuler."},
-  {em:"🐟",nm:"Rouget (capucin tacheté)",lat:"Parupeneus spp.",loc:"noms locaux variés",zone:"LAGON · RÉCIF · SABLE",
+  {em:"🐟",nm:"Rouget (capucin tacheté)",lat:"Parupeneus barberinus & spp.",loc:"Ahuru",zone:"LAGON · RÉCIF · SABLE",
    shape:"goatfish",c1:"#D98A6E",c2:"#9E4E33",
    habitat:"Fonds sableux et abords récifaux — fouille le sable avec ses barbillons.",
    tech:"Appât sur le fond (ver, chair, poulpe), palangrotte fine.",
    gear:"Hameçons fins, plombée légère, bas de ligne fluoro.",
-   eat:"ok", reg:null, note:"Proche du vete mais plus coloré (rougeâtre). Bonne chair, risque ciguatérique généralement faible."},
-  {em:"🐠",nm:"ʻĪʻihi (marignan / soldat)",lat:"Holocentridae (Sargocentron · Myripristis)",loc:"ʻĪʻihi · Ahuru",zone:"RÉCIF · TROUS · NUIT",
+   eat:"ok", reg:null, note:"« Ahuru » = Parupeneus barberinus. Proche du vete mais plus coloré (rougeâtre). Bonne chair, risque ciguatérique généralement faible."},
+  {em:"🐠",nm:"ʻĪʻihi (soldat)",lat:"Myripristis spp.",loc:"ʻĪʻihi",zone:"RÉCIF · TROUS · NUIT",
    shape:"squirrel",c1:"#E0564B",c2:"#A82E2E",
    habitat:"Cachés dans les anfractuosités le jour, actifs la nuit — rouges et épineux.",
    tech:"Petits hameçons à l'appât, surtout de nuit.",
    gear:"Matériel léger ; attention aux épines.",
-   eat:"ok", reg:null, note:"Petits poissons rouges nocturnes. ʻĪʻihi = marignans ; ahuru = soldats (Myripristis). Chair correcte, faible risque."},
-  {em:"🐠",nm:"Maito (chirurgien sombre)",lat:"Acanthurus spp.",loc:"Maito",zone:"PLATIER · RÉCIF",
+   eat:"ok", reg:null, note:"Soldats rouges nocturnes (Myripristis). Chair correcte, faible risque. (Le marignan Sargocentron spiniferum se dit ʻapaʻi ; « ahuru » est un rouget Parupeneus — voir Rouget.)"},
+  {em:"🐠",nm:"Maito (chirurgien)",lat:"Ctenochaetus striatus",loc:"Maito",zone:"PLATIER · RÉCIF",
    shape:"surgeon",c1:"#5C6B63",c2:"#33403A",
-   habitat:"Platier et dalle récifale — brouteur d'algues, en petits groupes.",
+   habitat:"Platier et dalle récifale — broute le film d'algues et de détritus du corail, en petits groupes.",
    tech:"Harpon réglementé, petits hameçons à l'appât.",
    gear:"Matériel léger.",
-   eat:"ok", reg:null, note:"Herbivore prisé. Scalpel tranchant à la base de la queue. (Manini et ume sont d'autres chirurgiens.)"},
+   eat:"danger", reg:null, note:"⚠ Ctenochaetus striatus : vecteur classique de ciguatera en Polynésie (il broute les algues porteuses de la toxine) — prudence forte, se renseigner localement. Scalpel tranchant à la base de la queue."},
   {em:"🐠",nm:"Ume tārei (nason masqué)",lat:"Naso lituratus",loc:"Ume tārei",zone:"RÉCIF · TOMBANT",
    shape:"naso",c1:"#7C8C86",c2:"#4A5A54",
    habitat:"Bordures de récif et tombants — brouteur, sans corne (≠ ume).",
@@ -1359,7 +1364,7 @@ var FISH=[
    tech:"Appât végétal (algue, pain) ou petite chair ; combat vif sur léger.",
    gear:"PE1–2, hameçons fins.",
    eat:"ok", reg:null, note:"Herbivore — chair parfois marquée par l'algue mais sûre. Bon combattant."},
-  {em:"🐠",nm:"Marava (picot / poisson-lapin)",lat:"Siganus spp.",loc:"Marava",zone:"LAGON · PLATIER · RÉCIF",
+  {em:"🐠",nm:"Marava (picot / poisson-lapin)",lat:"Siganus argenteus",loc:"Marava",zone:"LAGON · PLATIER · RÉCIF",
    shape:"surgeon",c1:"#AEBC92",c2:"#5E6E4A",
    habitat:"Lagon et platier — brouteur d'algues, en bancs.",
    tech:"Appât végétal, petits hameçons ; pêche traditionnelle au filet.",
@@ -1395,12 +1400,12 @@ var FISH=[
    tech:"Appât sur le fond, parfois au leurre lent près des structures.",
    gear:"Matériel léger à moyen.",
    eat:"ok", reg:null, note:"Poisson chauve-souris en forme de disque. Curieux, peu farouche autour des structures."},
-  {em:"🐟",nm:"Béryx (mata anaʻana)",lat:"Beryx splendens",loc:"Matāʻanaʻana",zone:"GRAND FOND · TOMBANT PROFOND",
+  {em:"🐟",nm:"Mata anaʻana (beauclaire)",lat:"Priacanthus hamrur",loc:"Matāʻanaʻana",zone:"RÉCIF · TOMBANT · NUIT",
    shape:"beryx",c1:"#E0625A",c2:"#A22E2E",
-   habitat:"Grandes profondeurs (200–600 m) le long des tombants — gros yeux adaptés à l'obscurité.",
-   tech:"Ligne à main / palangre profonde, souvent au treuil.",
-   gear:"Ligne profonde, plombs lourds, train d'hameçons.",
-   eat:"ok", reg:null, note:"Poisson de grand fond : chair fine et SANS risque ciguatérique. Hors lagon — pour les sorties au tombant profond."},
+   habitat:"Récif et tombants — caché le jour, actif la nuit ; grands yeux rouges adaptés à l'obscurité.",
+   tech:"Appât sur le fond près du tombant, surtout de nuit ; ligne à main.",
+   gear:"Bas de ligne fluoro, hameçons moyens, plombée selon le courant.",
+   eat:"ok", reg:null, note:"Beauclaire / catalufa (Priacanthus) — corrigé : ce n'est pas un béryx. Chair correcte, risque ciguatérique généralement faible."},
   {em:"🐟",nm:"Carangue à gros yeux (ʻomuri)",lat:"Caranx sexfasciatus",loc:"ʻOmuri",zone:"PASSE · LAGON · TOMBANT",
    shape:"jack",c1:"#BFD0D8",c2:"#5E7682",
    habitat:"En bancs serrés dans les passes et près des tombants — surtout au crépuscule et de nuit.",
@@ -1640,7 +1645,7 @@ function renderFish(){
   $("fishList").innerHTML=html;
   loadPhotos();
 }
-function toggleFish(i){ $("fish"+i).classList.toggle("open"); }
+function toggleFish(i){ var el=$("fish"+i); el.classList.toggle("open"); if(el.classList.contains("open")) maybeAutoPhoto(i); }
 
 /* ---- per-species photos (locales, hors-ligne, choisies par l'utilisateur) ---- */
 function pickPhoto(i){ var el=$("figin"+i); if(el) el.click(); }
@@ -1674,12 +1679,49 @@ function applyPhoto(i,url){
 function removePhoto(i){
   try{ store&&store.removeItem("aratika_photo_"+i); }catch(e){}
   var fig=$("fig"+i); var im=fig&&fig.querySelector("img.userphoto"); if(im) im.remove();
+  if(fig) fig.dataset.tried="";
   var rm=$("figrm"+i); if(rm) rm.style.display="none";
   var cap=$("figcap"+i); if(cap) cap.innerHTML='Illustration indicative · réf. : <i>'+FISH[i].lat+'</i>';
+  maybeAutoPhoto(i);
 }
 function figMsg(i,msg){ var cap=$("figcap"+i); if(cap) cap.textContent=msg; }
 function loadPhotos(){
   for(var i=0;i<FISH.length;i++){ var u=null; try{ u=store&&store.getItem("aratika_photo_"+i); }catch(e){} if(u) applyPhoto(i,u); }
+}
+
+/* ---- photos en ligne par nom latin (iNaturalist) — repli sur l'illustration ---- */
+function getAutoPhotos(){ try{ var v=store&&store.getItem("aratika_autophoto"); return v===null||v===undefined?"1":v; }catch(e){ return "1"; } }
+function setAutoPhotos(on){ try{ store&&store.setItem("aratika_autophoto",on?"1":"0"); }catch(e){} }
+function latinQuery(lat){
+  var s=(lat||"").replace(/\([^)]*\)/g,"");        // enlève les parenthèses
+  s=s.split(/[·,\/&]/)[0];                          // premier nom
+  s=s.replace(/\b(sspp|ssp|spp|sp)\b/gi,"").replace(/[.]/g,"").replace(/\s+/g," ").trim();
+  var w=s.split(" ");
+  if(w.length>2) s=w.slice(0,2).join(" ");
+  return s;
+}
+function maybeAutoPhoto(i){
+  if(getAutoPhotos()!=="1") return;
+  var uk=null; try{ uk=store&&store.getItem("aratika_photo_"+i); }catch(e){}
+  if(uk) return;                                    // la photo perso prime
+  var fig=$("fig"+i); if(!fig) return;
+  if(fig.querySelector("img.autophoto") || fig.dataset.tried==="1") return;
+  fig.dataset.tried="1";
+  var q=latinQuery(FISH[i].lat); if(!q) return;
+  fetch("https://api.inaturalist.org/v1/taxa?per_page=1&q="+encodeURIComponent(q))
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var t=d&&d.results&&d.results[0], p=t&&t.default_photo;
+      if(!p || !(p.medium_url||p.url)) return;
+      if($("fig"+i).querySelector("img.userphoto")) return; // l'utilisateur a mis une photo entre-temps
+      var im=document.createElement("img"); im.className="autophoto"; im.loading="lazy";
+      im.src=p.medium_url||p.url;
+      im.onerror=function(){ im.remove(); };
+      $("fig"+i).appendChild(im);
+      var cap=$("figcap"+i);
+      if(cap){ var a=(p.attribution||"").replace(/\(c\)/i,"©").slice(0,54);
+        cap.innerHTML='Photo : iNaturalist'+(a?' · '+a:'')+' — <i>'+q+'</i>'; }
+    }).catch(function(){ /* hors-ligne ou pas de résultat : on garde l'illustration */ });
 }
 
 var TECH=[
@@ -1774,13 +1816,15 @@ $("ephPrev").addEventListener("click",function(){ epheOffset--; renderEphe(); })
 $("ephNext").addEventListener("click",function(){ epheOffset++; renderEphe(); });
 
 /* settings */
-$("gearBtn").addEventListener("click",function(){ $("inLat").value=CFG.lat; $("inLon").value=CFG.lon; $("sheet").classList.add("on"); });
+$("gearBtn").addEventListener("click",function(){ $("inLat").value=CFG.lat; $("inLon").value=CFG.lon; $("inAuto").checked=(getAutoPhotos()==="1"); $("sheet").classList.add("on"); });
 $("sheetCancel").addEventListener("click",function(){ $("sheet").classList.remove("on"); });
 $("sheet").addEventListener("click",function(e){ if(e.target===$("sheet")) $("sheet").classList.remove("on"); });
 $("sheetSave").addEventListener("click",function(){
   var la=parseFloat(($("inLat").value||"").replace(",",".")), lo=parseFloat(($("inLon").value||"").replace(",","."));
   if(!isNaN(la)&&!isNaN(lo)){ saveCfg({lat:la,lon:lo}); }
+  setAutoPhotos($("inAuto").checked);
   $("sheet").classList.remove("on");
+  renderFish();
   loadAll();
 });
 
