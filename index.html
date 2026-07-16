@@ -466,6 +466,9 @@ else window.SunCalc = SunCalc;
   .figcap small{font-size:10.5px;color:var(--encre-doux)}
   .figbtn{font-family:"Space Mono",monospace;font-size:10px;font-weight:700;border:1px solid var(--sable-bord);background:#fff;border-radius:20px;padding:5px 9px;cursor:pointer;color:var(--encre)}
   .figbtn:active{background:var(--sable-bord)}
+  .fbar{display:flex;gap:8px;margin:0 0 14px}
+  .fbtn{flex:1;border:1px solid rgba(255,255,255,.32);background:rgba(255,255,255,.14);color:#fff;border-radius:30px;padding:9px 6px;font-size:12.5px;font-weight:600;cursor:pointer;backdrop-filter:blur(6px)}
+  .fbtn.on{background:var(--sable);color:var(--encre);border-color:var(--sable)}
   .glossary .ge{padding:8px 0;border-bottom:1px dashed var(--sable-bord)}
   .glossary .ge:last-child{border-bottom:none}
   .glossary .gt{font-family:"Space Mono",monospace;font-weight:700;font-size:12.5px;color:var(--encre)}
@@ -712,6 +715,11 @@ else window.SunCalc = SunCalc;
   <div class="page" id="p-poissons">
     <button class="back" data-back>‹ Accueil</button>
     <div class="ph"><h2>Poissons</h2><p>Espèces des lagons et passes des Tuamotu. Touchez une fiche pour les détails, le matériel et le risque ciguatérique.</p></div>
+    <div id="fishFilter" class="fbar">
+      <button class="fbtn on" data-f="all" onclick="setFishFilter('all')">Tous</button>
+      <button class="fbtn" data-f="recif" onclick="setFishFilter('recif')">Récif &amp; lagon</button>
+      <button class="fbtn" data-f="large" onclick="setFishFilter('large')">Large</button>
+    </div>
     <div id="fishList"></div>
     <div class="note">
       <b>Noms locaux —</b> les appellations paumotu/tahitiennes varient selon les îles ; vérifiez auprès des habitants. Le risque de <b>ciguatera (« la gratte »)</b> dépend fortement du platier et de la passe : une zone peut être toxique et la voisine non. Demandez toujours aux pêcheurs d'Aratika les secteurs réputés « graty ».
@@ -1424,6 +1432,24 @@ var FISH=[
    tech:"Appât léger sur le fond, petits leurres ; mord bien en fin de journée.",
    gear:"Hameçons fins, bas de ligne fluoro, matériel léger.",
    eat:"ok", reg:null, note:"Petite dorade dorée grégaire — bonne chair, active surtout au crépuscule et la nuit."},
+  {em:"🐠",nm:"Paraʻi (chirurgien à nageoires jaunes)",lat:"Acanthurus xanthopterus",loc:"Paraʻi",zone:"LAGON · RÉCIF · PASSE",
+   shape:"surgeon",c1:"#7C8C93",c2:"#465861",hab:"recif",
+   habitat:"Grand chirurgien du lagon et des abords de passe — broute algues et détritus, souvent en bancs.",
+   tech:"Harpon réglementé ; petits hameçons à l'appât.",
+   gear:"Matériel léger.",
+   eat:"warn", reg:null, note:"Grand chirurgien (jusqu'à ~70 cm). Ciguatera possible sur les gros sujets — prudence. Scalpel tranchant à la base de la queue."},
+  {em:"🐠",nm:"ʻApaʻi (marignan)",lat:"Sargocentron spiniferum",loc:"ʻApaʻi",zone:"RÉCIF · TROUS · NUIT",
+   shape:"squirrel",c1:"#E0564B",c2:"#A82E2E",hab:"recif",
+   habitat:"Grand marignan rouge nocturne, caché dans le corail le jour ; le plus grand des Holocentridae.",
+   tech:"Petits hameçons à l'appât, surtout de nuit.",
+   gear:"Matériel léger — attention à l'épine de la joue.",
+   eat:"ok", reg:null, note:"Marignan (Sargocentron spiniferum). Bonne chair, faible risque ciguatérique. Épine jouale venimeuse : manipuler avec soin."},
+  {em:"🐠",nm:"Loche marbrée (kito)",lat:"Epinephelus polyphekadion",loc:"Kito · Hāpuʻu",zone:"PASSE · TOMBANT · FRAYÈRE",
+   shape:"grouper",c1:"#9C8466",c2:"#5E4A33",marks:"mottle",hab:"recif",
+   habitat:"Mérou camouflage brun tacheté — passes et tombants. Grands regroupements de frai dans les passes (ex. Fakarava).",
+   tech:"Jig, appât sur le fond près des structures.",
+   gear:"Matériel puissant, frein serré (rentre au trou).",
+   eat:"danger", reg:"spawn", note:"⚠ Risque ciguatérique élevé. Se rassemble pour frayer dans les passes — regroupements sensibles et souvent réglementés : ne pas piller."},
   {em:"🐟",nm:"Barracuda",lat:"Sphyraena spp.",loc:"noms locaux variés",zone:"PASSE · LAGON · PLATIER",
    shape:"barracuda",c1:"#C7CFD4",c2:"#79868D",marks:"bars",
    habitat:"Passes, lagon, platier.",
@@ -1431,19 +1457,19 @@ var FISH=[
    gear:"Bas de ligne acier ou fluoro épais, leurres brillants.",
    eat:"danger", reg:null, note:"Les gros barracudas concentrent la ciguatera — relâcher les gros sujets."},
   {em:"🐟",nm:"Wahoo (Thazard)",lat:"Acanthocybium solandri",loc:"Paere",zone:"RÉCIF EXT. · PASSE · LARGE",
-   shape:"wahoo",c1:"#5E7E96",c2:"#2E4456",marks:"bars",
+   shape:"wahoo",c1:"#5E7E96",c2:"#2E4456",marks:"bars",hab:"large",
    habitat:"Le long du tombant extérieur et au large des passes.",
    tech:"Traîne rapide (rapala plongeant, jet, plume), lancer stickbait sur chasse.",
    gear:"Bas de ligne acier (dents), traîne classe 30–50 lb, 6–8 nœuds.",
    eat:"ok", reg:null, note:"Excellent à table, pélagique — pas de souci ciguatérique notable."},
   {em:"🐟",nm:"Thon (bonite / thon jaune)",lat:"Katsuwonus pelamis · Thunnus albacares",loc:"ʻAuhopu · ʻAʻahi",zone:"PASSE · LARGE",
-   shape:"tuna",c1:"#3F6E9A",c2:"#1E3D5C",marks:"finlets",
+   shape:"tuna",c1:"#3F6E9A",c2:"#1E3D5C",marks:"finlets",hab:"large",
    habitat:"Près des passes, chasses de surface, large.",
    tech:"Traîne, lancer sur les chasses (oiseaux), jig.",
    gear:"Métal jig, leurres de surface, traîne plume/jet.",
    eat:"ok", reg:null, note:"Pélagique — excellent et sûr. Repérez les oiseaux."},
   {em:"🐬",nm:"Mahi mahi (Dorade coryphène)",lat:"Coryphaena hippurus",loc:"Māhimahi",zone:"LARGE · OBJETS FLOTTANTS",
-   shape:"mahi",c1:"#46C0A2",c2:"#2C7E9B",marks:"gold",
+   shape:"mahi",c1:"#46C0A2",c2:"#2C7E9B",marks:"gold",hab:"large",
    habitat:"Eaux du large, autour des objets flottants & DCP.",
    tech:"Traîne, lancer leurre/appât près des flottants.",
    gear:"Traîne légère, leurres colorés.",
@@ -1622,9 +1648,18 @@ function regBadge(k){
   if(k==="spawn") return '<span class="badge b-warn">Frai réglementé</span>';
   return "";
 }
+var fishFilter="all";
+function fishHab(f){ return f.hab==="large" ? "large" : "recif"; }
+function setFishFilter(v){
+  fishFilter=v;
+  var btns=document.querySelectorAll("#fishFilter .fbtn");
+  for(var k=0;k<btns.length;k++){ btns[k].classList.toggle("on", btns[k].getAttribute("data-f")===v); }
+  renderFish();
+}
 function renderFish(){
   var html="";
   for(var i=0;i<FISH.length;i++){ var f=FISH[i];
+    if(fishFilter!=="all" && fishHab(f)!==fishFilter) continue;
     html+='<div class="fish" id="fish'+i+'"><div class="head" onclick="toggleFish('+i+')">'+
       '<div class="av">'+fishSVG(f,"a"+i)+'</div>'+
       '<div class="nm"><b>'+f.nm+'</b><i>'+f.lat+'</i><div class="loc">'+f.loc+' · '+f.zone+'</div></div>'+

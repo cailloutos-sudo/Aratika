@@ -1,6 +1,6 @@
 /* Aratika — service worker
    Bump CACHE à chaque mise à jour de l'app (ex. aratika-v2) pour forcer le rafraîchissement. */
-const CACHE = "aratika-v2";
+const CACHE = "aratika-v3";
 const CORE = [
   "./",
   "index.html",
